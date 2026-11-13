@@ -1,0 +1,72 @@
+# StreamBox (tvOS)
+
+An Apple TV app that:
+
+- browses movies and shows (metadata from TMDB);
+- finds streams through **your own** Stremio-compatible addons and **your own** Real-Debrid account;
+- plays live TV from **your own** Xtream Codes IPTV login.
+
+The app ships with no content and no sources. Everything is supplied by the user in Settings and stored in the Keychain.
+
+## Layout
+
+```
+project.yml                  XcodeGen spec (the .xcodeproj is generated on CI)
+Sources/
+  StreamBoxApp.swift         App entry + tab bar
+  Core/                      Keychain, settings, helpers
+  Services/                  TMDB, Stremio addon, Real-Debrid, Xtream clients
+  Views/                     Home/Search, Detail + stream picker, Live TV, Settings, Player
+.github/workflows/build.yml  CI: unsigned build (free) + optional TestFlight upload
+```
+
+## Working without a Mac
+
+1. Create a GitHub repo and push this folder to `main`.
+   A **public** repo gets free macOS build minutes; private repos have a limited allowance.
+2. The **Build** workflow runs on every push and compiles the app for tvOS.
+   A green tick means the code compiles. You can't install it yet.
+3. To install on your Apple TV you need a **paid Apple Developer account** (see below).
+
+## Turning on TestFlight (needs a paid account)
+
+1. Join the Apple Developer Program.
+2. In the developer portal, register the bundle ID `com.mauro.streambox` (or change it in `project.yml`).
+3. In App Store Connect, create a new **tvOS** app with that bundle ID.
+4. In App Store Connect → Users and Access → Integrations, create an **API key with Admin access**
+   (Admin is needed so CI can create the distribution certificate).
+5. In GitHub → Settings → Secrets and variables → Actions, add:
+   - Secret `ASC_KEY_ID`: the key ID
+   - Secret `ASC_ISSUER_ID`: the issuer ID
+   - Secret `ASC_KEY_P8_BASE64`: run `base64 -w0 AuthKey_XXXX.p8` (or use PowerShell
+     `[Convert]::ToBase64String([IO.File]::ReadAllBytes("AuthKey_XXXX.p8"))`)
+   - Secret `APPLE_TEAM_ID`: your 10-character team ID
+   - **Variable** `ENABLE_TESTFLIGHT` = `true`
+6. Push again. The build uploads to TestFlight. Open the TestFlight app on the Apple TV,
+   signed in with the same Apple ID, and install.
+
+**Before the first upload:** App Store Connect rejects tvOS builds without the layered
+app icon and top-shelf image assets. Add an `Assets.xcassets` with an
+"App Icon & Top Shelf Image" brand asset, then set
+`ASSETCATALOG_COMPILER_APPICON_NAME` in `project.yml`.
+
+## First run on the TV
+
+Settings tab:
+- **TMDB token:** free at themoviedb.org → Settings → API (the long "API Read Access Token").
+- **Real-Debrid API key:** real-debrid.com/apitoken.
+- **Stremio addons:** paste the manifest URL of an addon configured with your debrid account.
+- **Xtream Codes:** server, username and password from your IPTV provider, then **Test login**.
+
+Tip: typing on the Apple TV is painful. Your iPhone shows a keyboard notification whenever a text field is focused.
+
+## Roadmap
+
+1. ~~Shell, TMDB rails, detail pages~~
+2. ~~Xtream live TV + short EPG~~
+3. ~~Stremio addon streams + Real-Debrid resolve~~
+4. **Player:** replace AVPlayer with MPVKit or KSPlayer. AVPlayer can't play most MKV / DTS / TrueHD / PGS debrid files.
+5. Xtream VOD + series, full XMLTV EPG grid, favourites
+6. Continue watching / resume positions, Trakt sync
+7. More debrid providers (AllDebrid, Premiumize, TorBox), stream ranking and auto-pick
+8. Top shelf extension, profiles

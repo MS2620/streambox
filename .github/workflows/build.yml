@@ -1,0 +1,93 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Free: compiles the app (unsigned) on every push so you know the code builds.
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build for tvOS (unsigned)
+        run: |
+          xcodebuild -version
+          xcodebuild \
+            -project StreamBox.xcodeproj \
+            -scheme StreamBox \
+            -configuration Release \
+            -destination 'generic/platform=tvOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      # Unsigned IPA for sideloading (Sideloadly / atvloadly re-sign it with your Apple ID)
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-appletvos/StreamBox.app Payload/
+          zip -qry StreamBox-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StreamBox-unsigned-ipa
+          path: StreamBox-unsigned.ipa
+
+  # Needs a paid Apple Developer account. Enable by setting the repository
+  # variable ENABLE_TESTFLIGHT=true and adding the secrets listed in README.md.
+  testflight:
+    needs: build
+    if: github.event_name != 'pull_request' && vars.ENABLE_TESTFLIGHT == 'true'
+    runs-on: macos-latest
+    env:
+      KEY_PATH: ${{ github.workspace }}/../AuthKey.p8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Write App Store Connect API key
+        run: echo "${{ secrets.ASC_KEY_P8_BASE64 }}" | base64 --decode > "$KEY_PATH"
+
+      - name: Archive
+        run: |
+          xcodebuild \
+            -project StreamBox.xcodeproj \
+            -scheme StreamBox \
+            -configuration Release \
+            -destination 'generic/platform=tvOS' \
+            -archivePath "$RUNNER_TEMP/StreamBox.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            archive
+
+      - name: Export and upload to TestFlight
+        run: |
+          sed "s/TEAM_ID_PLACEHOLDER/${{ secrets.APPLE_TEAM_ID }}/" ExportOptions.plist > "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/StreamBox.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}"
