@@ -11,6 +11,19 @@ final class ContentProvider: TVTopShelfContentProvider {
             return
         }
         var sections: [TVTopShelfItemCollection<TVTopShelfSectionedItem>] = []
+        // TEMPORARY test: one card whose picture is inside the extension rather than on the web.
+        // If only this card shows, web pictures are the problem; if nothing shows, it's the signing.
+        if let testImage = Bundle.main.url(forResource: "TestCard", withExtension: "png") {
+            let test = TVTopShelfSectionedItem(identifier: "streambox-test")
+            test.title = "StreamBox (test card)"
+            test.imageShape = .hdtv
+            test.setImageURL(testImage, for: .screenScale1x)
+            test.setImageURL(testImage, for: .screenScale2x)
+            if let url = URL(string: "streambox://open") { test.displayAction = TVTopShelfAction(url: url) }
+            let section = TVTopShelfItemCollection(items: [test])
+            section.title = "Test"
+            sections.append(section)
+        }
         if !snapshot.live.isEmpty {
             let section = TVTopShelfItemCollection(items: snapshot.live.map(Self.item))
             section.title = "Live now"
