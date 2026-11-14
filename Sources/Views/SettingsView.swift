@@ -31,6 +31,8 @@ struct SettingsView: View {
 
                 GlassPanel("About") {
                     SettingsInfoRow("Version", icon: "info.circle", value: Self.version)
+                    SettingsInfoRow("Top Shelf", icon: "rectangle.topthird.inset.filled",
+                                    value: TopShelfStore.isAvailable ? "Ready" : "Blocked by signing (no App Group)")
                     SettingsInfoRow("Player engine", icon: "cpu", value: "AetherEngine")
                 }
             }
