@@ -128,9 +128,63 @@ struct XtreamClient {
         return try JSONDecoder().decode(ShortEPGResponse.self, from: data).epgListings
     }
 
+    /// The provider's whole guide for one channel (usually several days).
+    func fullEPG(streamID: Int) async throws -> [XtreamEPGEntry] {
+        let data = try await api("get_simple_data_table", ["stream_id": String(streamID)])
+        return try JSONDecoder().decode(ShortEPGResponse.self, from: data).epgListings
+    }
+
     func liveURL(for channel: XtreamChannel, format: LiveStreamFormat = .hls) -> URL? {
         let user = account.username.formEncoded
         let pass = account.password.formEncoded
         return URL(string: "\(account.normalizedServer)/live/\(user)/\(pass)/\(channel.id).\(format.fileExtension)")
+    }
+}
+
+/// Caches the channel list and guide data so Search, Home and Sports don't
+/// re-download them every time.
+actor XtreamCache {
+    static let shared = XtreamCache()
+
+    private var streams: (key: String, date: Date, value: [XtreamChannel])?
+    private var categories: (key: String, date: Date, value: [XtreamCategory])?
+    private var guides: [String: (date: Date, value: [XtreamEPGEntry])] = [:]
+
+    private static let listLifetime: TimeInterval = 10 * 60
+    private static let guideLifetime: TimeInterval = 20 * 60
+
+    private func accountKey(_ client: XtreamClient) -> String {
+        client.account.normalizedServer + "|" + client.account.username
+    }
+
+    func liveStreams(_ client: XtreamClient) async throws -> [XtreamChannel] {
+        let key = accountKey(client)
+        if let streams, streams.key == key, Date().timeIntervalSince(streams.date) < Self.listLifetime {
+            return streams.value
+        }
+        let value = try await client.liveStreams(categoryID: nil)
+        streams = (key, Date(), value)
+        return value
+    }
+
+    func liveCategories(_ client: XtreamClient) async throws -> [XtreamCategory] {
+        let key = accountKey(client)
+        if let categories, categories.key == key, Date().timeIntervalSince(categories.date) < Self.listLifetime {
+            return categories.value
+        }
+        let value = try await client.liveCategories()
+        categories = (key, Date(), value)
+        return value
+    }
+
+    /// Never throws: a channel whose guide can't be read just has no listings.
+    func fullEPG(_ client: XtreamClient, streamID: Int) async -> [XtreamEPGEntry] {
+        let cacheKey = accountKey(client) + "|\(streamID)"
+        if let cached = guides[cacheKey], Date().timeIntervalSince(cached.date) < Self.guideLifetime {
+            return cached.value
+        }
+        let value = (try? await client.fullEPG(streamID: streamID)) ?? []
+        guides[cacheKey] = (Date(), value)
+        return value
     }
 }

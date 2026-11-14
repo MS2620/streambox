@@ -68,6 +68,10 @@ struct TMDBDetails: Decodable {
     let externalIds: TMDBExternalIDs?
     let credits: Credits?
     let recommendations: TMDBPage<TMDBItem>?
+    // Series only
+    let nextEpisodeToAir: TVEpisode?
+    let lastEpisodeToAir: TVEpisode?
+    let status: String?
 }
 
 /// Uses a TMDB "API Read Access Token" (v4 bearer token).
@@ -128,6 +132,11 @@ struct TMDBClient {
     func details(for item: TMDBItem) async throws -> TMDBDetails {
         try await get("\(item.kind.rawValue)/\(item.id)",
                       ["append_to_response": "external_ids,credits,recommendations"])
+    }
+
+    /// Lightweight series details (no cast or recommendations), used by the Calendar.
+    func tvDetails(id: Int) async throws -> TMDBDetails {
+        try await get("tv/\(id)")
     }
 
     func imdbID(for item: TMDBItem) async throws -> String? {

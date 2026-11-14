@@ -364,7 +364,7 @@ private struct FavouriteChannelsRow: View {
             channels = []
             return
         }
-        let all = (try? await settings.xtreamClient.liveStreams(categoryID: nil)) ?? []
+        let all = (try? await XtreamCache.shared.liveStreams(settings.xtreamClient)) ?? []
         channels = all.filter { favourites.contains($0.id) }
     }
 
@@ -427,38 +427,5 @@ struct PosterCard: View {
         }
         .frame(width: 220, height: 330)
         .clipped()
-    }
-}
-
-struct SearchView: View {
-    @EnvironmentObject var settings: AppSettings
-    @State private var query = ""
-    @State private var results: [TMDBItem] = []
-
-    private let columns = Array(repeating: GridItem(.fixed(220), spacing: 40), count: 6)
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 50) {
-                    ForEach(results, id: \.uid) { item in
-                        NavigationLink(value: item) {
-                            PosterCard(item: item)
-                        }
-                        .buttonStyle(.card)
-                    }
-                }
-                .padding(60)
-            }
-            .searchable(text: $query)
-            .task(id: query) {
-                try? await Task.sleep(for: .milliseconds(400))
-                guard !Task.isCancelled, query.count >= 2, !settings.tmdbToken.isEmpty else { return }
-                results = (try? await settings.tmdb.search(query)) ?? []
-            }
-            .navigationDestination(for: TMDBItem.self) { item in
-                DetailView(item: item)
-            }
-        }
     }
 }

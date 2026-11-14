@@ -1,0 +1,565 @@
+import Foundation
+
+// MARK: - Saved favourites
+
+/// A followed team. Saved in Preferences.
+struct FavouriteTeam: Codable, Hashable, Identifiable {
+    /// ESPN sport path ("soccer", "rugby", "football", "basketball", "hockey",
+    /// "baseball"), or "f1" for Formula 1 constructors.
+    let sport: String
+    /// ESPN league slug or id ("eng.1", "267979", "nfl"), or "f1".
+    let league: String
+    let leagueName: String
+    let teamID: String
+    let name: String
+    let logo: String?
+
+    var id: String { "\(sport)/\(league)/\(teamID)" }
+    var isF1: Bool { sport == "f1" }
+}
+
+struct SportLeague: Hashable, Identifiable {
+    let sport: String
+    let slug: String
+    let name: String
+    var id: String { "\(sport)/\(slug)" }
+}
+
+enum SportsCatalog {
+    /// ESPN rugby competitions (ids from ESPN's league list).
+    static let rugby: [SportLeague] = [
+        SportLeague(sport: "rugby", slug: "180659", name: "Six Nations"),
+        SportLeague(sport: "rugby", slug: "267979", name: "Premiership Rugby"),
+        SportLeague(sport: "rugby", slug: "270557", name: "United Rugby Championship"),
+        SportLeague(sport: "rugby", slug: "271937", name: "European Rugby Champions Cup"),
+        SportLeague(sport: "rugby", slug: "272073", name: "European Rugby Challenge Cup"),
+        SportLeague(sport: "rugby", slug: "270559", name: "French Top 14"),
+        SportLeague(sport: "rugby", slug: "244293", name: "The Rugby Championship"),
+        SportLeague(sport: "rugby", slug: "242041", name: "Super Rugby Pacific"),
+        SportLeague(sport: "rugby", slug: "289234", name: "International Test Matches"),
+        SportLeague(sport: "rugby", slug: "164205", name: "Rugby World Cup"),
+    ]
+
+    static let us: [SportLeague] = [
+        SportLeague(sport: "football", slug: "nfl", name: "NFL"),
+        SportLeague(sport: "basketball", slug: "nba", name: "NBA"),
+        SportLeague(sport: "hockey", slug: "nhl", name: "NHL"),
+        SportLeague(sport: "baseball", slug: "mlb", name: "MLB"),
+    ]
+
+    /// Shown first in the football list; every other league follows A–Z.
+    static let footballPriority = [
+        "eng.1", "sco.1", "uefa.champions", "uefa.europa", "uefa.europa.conf",
+        "eng.2", "eng.3", "eng.4", "sco.2", "eng.fa", "eng.league_cup",
+        "esp.1", "ger.1", "ita.1", "fra.1", "por.1", "ned.1", "usa.1",
+    ]
+}
+
+// MARK: - Fixtures
+
+struct Fixture: Identifiable, Hashable {
+    struct Side: Hashable {
+        let id: String
+        let name: String
+        let logo: String?
+    }
+
+    struct Session: Hashable {
+        let name: String
+        let date: Date
+    }
+
+    let id: String
+    let date: Date
+    let competition: String
+    let title: String
+    let home: Side?
+    let away: Side?
+    /// Extra line, e.g. the F1 circuit.
+    var subtitle: String? = nil
+    var broadcasts: [String] = []
+    /// F1 weekend sessions, in order.
+    var sessions: [Session] = []
+    /// Lower-cased words to look for in TV guide listings.
+    var keywords: [String] = []
+    /// Names of the user's teams involved.
+    var followed: [String] = []
+
+    var isRace: Bool { !sessions.isEmpty }
+
+    /// When to look for it in the TV guide: the next F1 session, or kick-off.
+    var guideTime: Date {
+        let soon = Date().addingTimeInterval(-2 * 3600)
+        return sessions.first { $0.date > soon }?.date ?? date
+    }
+}
+
+// MARK: - Dates
+
+enum SportsDate {
+    private static let internet: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    /// ESPN sends times without seconds ("2026-08-29T11:30Z"), which
+    /// ISO8601DateFormatter rejects, so that form gets its own parser.
+    private static let noSeconds: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mmX"
+        return formatter
+    }()
+
+    private static let range: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyyMMdd"
+        return formatter
+    }()
+
+    static func parse(_ string: String) -> Date? {
+        internet.date(from: string) ?? noSeconds.date(from: string) ?? fractional.date(from: string)
+    }
+
+    /// "20261114-20270113" for ESPN's `dates` parameter.
+    static func rangeParameter(days: Int) -> String {
+        let start = Date()
+        let end = start.addingTimeInterval(TimeInterval(days) * 86_400)
+        return "\(range.string(from: start))-\(range.string(from: end))"
+    }
+}
+
+// MARK: - ESPN
+
+/// A team as ESPN returns it. Logos come as a `logos` array (teams, schedules)
+/// or a single `logo` string (scoreboards), so both are read.
+struct ESPNTeam: Decodable, Hashable {
+    let id: String
+    let displayName: String
+    let shortDisplayName: String?
+    let location: String?
+    let logoURL: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, displayName, shortDisplayName, name, location, logo, logos
+    }
+
+    private struct Logo: Decodable { let href: String? }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.flexString(.id) ?? ""
+        let name = try? c.decode(String.self, forKey: .name)
+        displayName = (try? c.decode(String.self, forKey: .displayName)) ?? name ?? "Team"
+        shortDisplayName = try? c.decode(String.self, forKey: .shortDisplayName)
+        location = try? c.decode(String.self, forKey: .location)
+        let logos = try? c.decode([Logo].self, forKey: .logos)
+        logoURL = logos?.compactMap(\.href).first ?? (try? c.decode(String.self, forKey: .logo))
+    }
+
+    /// Lower-cased names to look for in guide listings ("man united", "liverpool").
+    var keywords: [String] {
+        var words = [displayName, shortDisplayName, location].compactMap { $0?.lowercased() }
+        words += words.map { name in
+            name.replacingOccurrences(of: " afc", with: "")
+                .replacingOccurrences(of: " fc", with: "")
+                .replacingOccurrences(of: "fc ", with: "")
+                .replacingOccurrences(of: " cf", with: "")
+                .trimmingCharacters(in: .whitespaces)
+        }
+        return Array(Set(words.filter { $0.count >= 4 }))
+    }
+}
+
+private struct ESPNTeamsResponse: Decodable {
+    struct Sport: Decodable { let leagues: [League]? }
+    struct League: Decodable { let teams: [Wrapper]? }
+    struct Wrapper: Decodable { let team: ESPNTeam }
+    let sports: [Sport]?
+}
+
+private struct ESPNDropdownResponse: Decodable {
+    struct League: Decodable {
+        let name: String?
+        let slug: String?
+    }
+    let leagues: [League]?
+}
+
+private struct ESPNEventsResponse: Decodable {
+    let events: [ESPNEvent]?
+}
+
+private struct ESPNEvent: Decodable {
+    /// Each field decodes on its own, so an unexpected shape in one
+    /// (broadcasts differ between endpoints) doesn't drop the fixture.
+    struct Competition: Decodable {
+        let competitors: [Competitor]?
+        let broadcasts: [Broadcast]?
+        let status: Status?
+
+        private enum CodingKeys: String, CodingKey { case competitors, broadcasts, status }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            competitors = try? c.decode([Competitor].self, forKey: .competitors)
+            broadcasts = try? c.decode([Broadcast].self, forKey: .broadcasts)
+            status = try? c.decode(Status.self, forKey: .status)
+        }
+    }
+    struct Competitor: Decodable {
+        let homeAway: String?
+        let team: ESPNTeam?
+
+        private enum CodingKeys: String, CodingKey { case homeAway, team }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            homeAway = try? c.decode(String.self, forKey: .homeAway)
+            team = try? c.decode(ESPNTeam.self, forKey: .team)
+        }
+    }
+    struct Broadcast: Decodable {
+        struct Media: Decodable { let shortName: String? }
+        let media: Media?
+        let names: [String]?
+    }
+    struct Status: Decodable {
+        struct StatusType: Decodable { let state: String? }
+        let type: StatusType?
+    }
+
+    let id: String
+    let date: String
+    let name: String?
+    let competitions: [Competition]?
+
+    private enum CodingKeys: String, CodingKey { case id, date, name, competitions }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.flexString(.id) ?? UUID().uuidString
+        date = (try? c.decode(String.self, forKey: .date)) ?? ""
+        name = try? c.decode(String.self, forKey: .name)
+        competitions = try? c.decode([Competition].self, forKey: .competitions)
+    }
+}
+
+struct ESPNClient {
+    private static let base = "https://site.api.espn.com/apis/site/v2"
+
+    private func fetch<T: Decodable>(_ type: T.Type, _ path: String) async throws -> T {
+        guard let url = URL(string: Self.base + path) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        let data = try await URLSession.shared.fetch(request)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// Every football competition ESPN covers, popular ones first.
+    func footballLeagues() async throws -> [SportLeague] {
+        let response = try await fetch(ESPNDropdownResponse.self, "/leagues/dropdown?sport=soccer&limit=500")
+        var seen = Set<String>()
+        let leagues = (response.leagues ?? []).compactMap { league -> SportLeague? in
+            guard let slug = league.slug, let name = league.name, !slug.isEmpty,
+                  seen.insert(slug).inserted else { return nil }
+            return SportLeague(sport: "soccer", slug: slug, name: name)
+        }
+        let priority = SportsCatalog.footballPriority
+        return leagues.sorted { a, b in
+            let ia = priority.firstIndex(of: a.slug) ?? Int.max
+            let ib = priority.firstIndex(of: b.slug) ?? Int.max
+            if ia != ib { return ia < ib }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+    }
+
+    func teams(in league: SportLeague) async throws -> [ESPNTeam] {
+        let response = try await fetch(ESPNTeamsResponse.self, "/sports/\(league.sport)/\(league.slug)/teams?limit=500")
+        let teams = response.sports?.first?.leagues?.first?.teams?.map(\.team) ?? []
+        return teams.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
+    /// The team's next fixtures. Tries the team schedule first; rugby's team
+    /// schedule isn't available, so it falls back to the league scoreboard.
+    func upcomingFixtures(for team: FavouriteTeam, limit: Int = 3) async -> [Fixture] {
+        let league = "/sports/\(team.sport)/\(team.league)"
+        let fixtureParameter = (team.sport == "soccer" || team.sport == "rugby") ? "?fixture=true" : ""
+        let paths = [
+            "\(league)/teams/\(team.teamID)/schedule\(fixtureParameter)",
+            "\(league)/scoreboard?dates=\(SportsDate.rangeParameter(days: 60))&limit=300",
+            "\(league)/scoreboard",
+        ]
+        let cutoff = Date().addingTimeInterval(-3 * 3600)
+
+        for path in paths {
+            guard let response = try? await fetch(ESPNEventsResponse.self, path) else { continue }
+            let fixtures = (response.events ?? [])
+                .compactMap { fixture(from: $0, team: team) }
+                .filter { $0.date > cutoff }
+                .sorted { $0.date < $1.date }
+            if !fixtures.isEmpty {
+                return Array(fixtures.prefix(limit))
+            }
+        }
+        return []
+    }
+
+    private func fixture(from event: ESPNEvent, team: FavouriteTeam) -> Fixture? {
+        guard let competition = event.competitions?.first,
+              let competitors = competition.competitors,
+              competitors.contains(where: { $0.team?.id == team.teamID }),
+              let date = SportsDate.parse(event.date) else { return nil }
+        // Skip finished games.
+        if competition.status?.type?.state == "post" { return nil }
+
+        let homeTeam = competitors.first { $0.homeAway == "home" }?.team ?? competitors.first?.team
+        let awayTeam = competitors.first { $0.homeAway == "away" }?.team ?? competitors.last?.team
+        let home = homeTeam.map { Fixture.Side(id: $0.id, name: $0.displayName, logo: $0.logoURL) }
+        let away = awayTeam.map { Fixture.Side(id: $0.id, name: $0.displayName, logo: $0.logoURL) }
+
+        var broadcasts: [String] = []
+        for broadcast in competition.broadcasts ?? [] {
+            if let name = broadcast.media?.shortName { broadcasts.append(name) }
+            broadcasts += broadcast.names ?? []
+        }
+
+        let title = [home?.name, away?.name].compactMap { $0 }.joined(separator: " v ")
+        return Fixture(
+            id: "\(team.sport)-\(event.id)",
+            date: date,
+            competition: team.leagueName,
+            title: title.isEmpty ? (event.name ?? "Match") : title,
+            home: home,
+            away: away,
+            broadcasts: Array(Set(broadcasts)).sorted(),
+            keywords: Array(Set((homeTeam?.keywords ?? []) + (awayTeam?.keywords ?? []))),
+            followed: [team.name]
+        )
+    }
+}
+
+// MARK: - Formula 1 (Jolpica, the Ergast successor)
+
+struct F1Constructor: Hashable, Identifiable {
+    let id: String
+    let name: String
+}
+
+struct F1Client {
+    private struct Response: Decodable {
+        let data: MRData
+        private enum CodingKeys: String, CodingKey { case data = "MRData" }
+    }
+
+    private struct MRData: Decodable {
+        let raceTable: RaceTable?
+        let constructorTable: ConstructorTable?
+        private enum CodingKeys: String, CodingKey {
+            case raceTable = "RaceTable"
+            case constructorTable = "ConstructorTable"
+        }
+    }
+
+    private struct RaceTable: Decodable {
+        let races: [Race]
+        private enum CodingKeys: String, CodingKey { case races = "Races" }
+    }
+
+    private struct ConstructorTable: Decodable {
+        struct Constructor: Decodable { let constructorId: String; let name: String }
+        let constructors: [Constructor]
+        private enum CodingKeys: String, CodingKey { case constructors = "Constructors" }
+    }
+
+    private struct SessionTime: Decodable {
+        let date: String
+        let time: String?
+    }
+
+    private struct Race: Decodable {
+        struct Circuit: Decodable {
+            struct Location: Decodable { let locality: String?; let country: String? }
+            let circuitName: String?
+            let location: Location?
+            private enum CodingKeys: String, CodingKey { case circuitName, location = "Location" }
+        }
+
+        let season: String
+        let round: String
+        let raceName: String
+        let circuit: Circuit?
+        let date: String
+        let time: String?
+        let firstPractice: SessionTime?
+        let secondPractice: SessionTime?
+        let thirdPractice: SessionTime?
+        let sprintQualifying: SessionTime?
+        let sprint: SessionTime?
+        let qualifying: SessionTime?
+
+        private enum CodingKeys: String, CodingKey {
+            case season, round, raceName, date, time
+            case circuit = "Circuit"
+            case firstPractice = "FirstPractice"
+            case secondPractice = "SecondPractice"
+            case thirdPractice = "ThirdPractice"
+            case sprintQualifying = "SprintQualifying"
+            case sprint = "Sprint"
+            case qualifying = "Qualifying"
+        }
+    }
+
+    private static let base = "https://api.jolpi.ca/ergast/f1"
+
+    private func fetch(_ path: String) async throws -> MRData {
+        guard let url = URL(string: Self.base + path) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        let data = try await URLSession.shared.fetch(request)
+        return try JSONDecoder().decode(Response.self, from: data).data
+    }
+
+    func constructors() async throws -> [F1Constructor] {
+        let data = try await fetch("/current/constructors.json")
+        return (data.constructorTable?.constructors ?? []).map { F1Constructor(id: $0.constructorId, name: $0.name) }
+    }
+
+    /// "2026-03-08" + "04:00:00Z" → a Date (UTC). Without a time, midday UTC.
+    private static func date(_ date: String, _ time: String?) -> Date? {
+        SportsDate.parse("\(date)T\(time ?? "12:00:00Z")")
+    }
+
+    /// The next race weekend that hasn't finished, as a fixture.
+    func nextRace(followed: [String]) async throws -> Fixture? {
+        let data = try await fetch("/current.json")
+        let cutoff = Date().addingTimeInterval(-3 * 3600)
+        let races = data.raceTable?.races ?? []
+        guard let race = races.first(where: { (Self.date($0.date, $0.time) ?? .distantPast) > cutoff }),
+              let raceDate = Self.date(race.date, race.time) else { return nil }
+
+        var sessions: [Fixture.Session] = []
+        func add(_ name: String, _ session: SessionTime?) {
+            if let session, let date = Self.date(session.date, session.time) {
+                sessions.append(Fixture.Session(name: name, date: date))
+            }
+        }
+        add("Practice 1", race.firstPractice)
+        add("Practice 2", race.secondPractice)
+        add("Practice 3", race.thirdPractice)
+        add("Sprint Qualifying", race.sprintQualifying)
+        add("Sprint", race.sprint)
+        add("Qualifying", race.qualifying)
+        sessions.append(Fixture.Session(name: "Race", date: raceDate))
+        sessions.sort { $0.date < $1.date }
+
+        let locality = race.circuit?.location?.locality
+        let place = [race.circuit?.circuitName, locality, race.circuit?.location?.country]
+            .compactMap { $0 }.joined(separator: ", ")
+        var keywords = ["formula 1", "formula one", "f1", "grand prix", race.raceName.lowercased()]
+        if let locality, locality.count >= 4 { keywords.append(locality.lowercased()) }
+
+        return Fixture(
+            id: "f1-\(race.season)-\(race.round)",
+            date: raceDate,
+            competition: "Formula 1 · Round \(race.round)",
+            title: race.raceName,
+            home: nil,
+            away: nil,
+            subtitle: place.isEmpty ? nil : place,
+            sessions: sessions,
+            keywords: keywords,
+            followed: followed
+        )
+    }
+}
+
+// MARK: - Finding the fixture in the TV guide
+
+struct ChannelMatch: Identifiable {
+    let channel: XtreamChannel
+    let programme: XtreamEPGEntry
+    let score: Int
+    var id: Int { channel.id }
+}
+
+enum ChannelFinder {
+    /// Category / channel name fragments that suggest a sports channel.
+    private static let sportWords = [
+        "sport", "f1", "formula", "football", "soccer", "rugby", "nfl", "nba", "nhl", "mlb",
+        "premier", "dazn", "tnt", "espn", "bein", "eleven", "viaplay", "arena", "golf",
+        "racing", "motor", "laliga", "serie a", "bundesliga", "ligue", "uefa", "ppv", "event",
+    ]
+
+    /// Searches the provider's guide for listings of this fixture at its time.
+    static func matches(for fixture: Fixture, client: XtreamClient) async -> [ChannelMatch] {
+        let cache = XtreamCache.shared
+        guard let streams = try? await cache.liveStreams(client) else { return [] }
+        let categories = (try? await cache.liveCategories(client)) ?? []
+
+        let sportCategories = Set(categories
+            .filter { category in sportWords.contains { category.name.lowercased().contains($0) } }
+            .map(\.id))
+        var candidates = streams.filter { channel in
+            if let category = channel.categoryID, sportCategories.contains(category) { return true }
+            let name = channel.name.lowercased()
+            return sportWords.contains { name.contains($0) }
+        }
+        // Keep the guide download bounded on very large playlists.
+        if candidates.count > 400 { candidates = Array(candidates.prefix(400)) }
+
+        let start = fixture.guideTime
+        let keywords = fixture.keywords
+        var results: [ChannelMatch] = []
+
+        await withTaskGroup(of: ChannelMatch?.self) { group in
+            var next = 0
+            let parallel = min(8, candidates.count)
+            while next < parallel {
+                let channel = candidates[next]
+                group.addTask { await match(channel, start: start, keywords: keywords, client: client) }
+                next += 1
+            }
+            while let result = await group.next() {
+                if let result { results.append(result) }
+                if next < candidates.count {
+                    let channel = candidates[next]
+                    group.addTask { await match(channel, start: start, keywords: keywords, client: client) }
+                    next += 1
+                }
+            }
+        }
+
+        return Array(results
+            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.channel.name < $1.channel.name }
+            .prefix(12))
+    }
+
+    private static func match(_ channel: XtreamChannel, start: Date, keywords: [String],
+                              client: XtreamClient) async -> ChannelMatch? {
+        let guide = await XtreamCache.shared.fullEPG(client, streamID: channel.id)
+        var best: ChannelMatch?
+        for entry in guide {
+            guard let begins = entry.start, let ends = entry.end,
+                  // On air around the start (allowing for build-up shows).
+                  begins <= start.addingTimeInterval(20 * 60),
+                  ends >= start.addingTimeInterval(5 * 60) else { continue }
+            let text = (entry.title + " " + entry.description).lowercased()
+            let score = keywords.filter { text.contains($0) }.count
+            if score > 0, score > (best?.score ?? 0) {
+                best = ChannelMatch(channel: channel, programme: entry, score: score)
+            }
+        }
+        return best
+    }
+}

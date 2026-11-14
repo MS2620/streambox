@@ -97,6 +97,9 @@ struct Preferences: Codable, Equatable {
     // My List (saved movies and series), most recent last
     var myList: [TMDBItem] = []
 
+    // Sports
+    var favouriteTeams: [FavouriteTeam] = []
+
     // Live TV
     var liveFormat: LiveStreamFormat = .hls
     var channelSwitching: ChannelSwitching = .fast
@@ -163,4 +166,34 @@ enum LanguageOptions {
         Choice("BR", "Brazil"), Choice("ES", "Spain"), Choice("FR", "France"), Choice("DE", "Germany"), Choice("IT", "Italy"),
         Choice("NL", "Netherlands"),
     ]
+}
+
+/// Date helpers shared by the Calendar and Sports screens.
+enum DayFormat {
+    private static let dayParser: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    /// Parses TMDB air dates ("2026-11-21") as local midnight.
+    static func parseDay(_ string: String?) -> Date? {
+        guard let string, !string.isEmpty else { return nil }
+        return dayParser.date(from: string)
+    }
+
+    /// "Today", "Tomorrow", "Yesterday" or "Friday 21 November".
+    static func label(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInTomorrow(date) { return "Tomorrow" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(.dateTime.weekday(.wide).day().month(.wide))
+    }
+
+    static func time(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
+    }
 }
