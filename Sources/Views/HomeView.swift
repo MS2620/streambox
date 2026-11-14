@@ -60,6 +60,8 @@ struct CatalogView: View {
     let hero: (TMDBClient) async throws -> [TMDBItem]
     let sections: [CatalogSection]
     var showsFavouriteChannels = false
+    /// Which saved titles to show in My List: nil shows movies and series.
+    var myListKind: MediaType? = nil
 
     @State private var featured: [TMDBItem] = []
 
@@ -79,6 +81,7 @@ struct CatalogView: View {
                             if !featured.isEmpty {
                                 HeroBanner(items: featured)
                             }
+                            MyListRow(kind: myListKind)
                             if showsFavouriteChannels {
                                 FavouriteChannelsRow()
                             }
@@ -88,7 +91,8 @@ struct CatalogView: View {
                         }
                         .padding(.bottom, 60)
                     }
-                    .ignoresSafeArea(edges: .top)
+                    .contentMargins(.horizontal, 0, for: .scrollContent)
+                    .ignoresSafeArea(edges: [.top, .horizontal])
                 }
             }
             .navigationDestination(for: TMDBItem.self) { item in
@@ -170,6 +174,8 @@ private struct HeroBanner: View {
             .padding(.bottom, 50)
         }
         .frame(height: 820)
+        .frame(maxWidth: .infinity)
+        .ignoresSafeArea(edges: .horizontal)
         .animation(.easeInOut(duration: 0.6), value: index)
         .task(id: items.count) {
             // Rotate through the featured titles.
@@ -183,6 +189,24 @@ private struct HeroBanner: View {
 }
 
 // MARK: - Rows
+
+/// Saved titles, newest first.
+private struct MyListRow: View {
+    @EnvironmentObject var settings: AppSettings
+    let kind: MediaType?
+
+    private var items: [TMDBItem] {
+        settings.prefs.myList.reversed().filter { kind == nil || $0.kind == kind }
+    }
+
+    var body: some View {
+        if items.isEmpty {
+            Color.clear.frame(height: 1)
+        } else {
+            RailView(title: "My List", items: items)
+        }
+    }
+}
 
 private struct LazyRail: View {
     @EnvironmentObject var settings: AppSettings

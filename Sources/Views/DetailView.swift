@@ -12,116 +12,257 @@ struct DetailView: View {
     @EnvironmentObject var settings: AppSettings
     let item: TMDBItem
 
-    @State private var imdbID: String?
-    @State private var seasons: [TVSeasonSummary] = []
+    @State private var details: TMDBDetails?
     @State private var selectedSeason = 1
     @State private var episodes: [TVEpisode] = []
+    @State private var loadingEpisodes = false
     @State private var streamTarget: StreamTarget?
     @State private var error: String?
 
     private var tmdb: TMDBClient { settings.tmdb }
+    private var imdbID: String? { details?.externalIds?.imdbId }
+    private var seasons: [TVSeasonSummary] { (details?.seasons ?? []).filter { $0.seasonNumber > 0 } }
+    private var inMyList: Bool { settings.prefs.myList.contains { $0.uid == item.uid } }
+
+    private var recommendations: [TMDBItem] {
+        (details?.recommendations?.results ?? []).map { rec in
+            var copy = rec
+            if copy.mediaType == nil { copy.mediaType = item.kind.rawValue }
+            return copy
+        }
+    }
 
     var body: some View {
-        ZStack {
-            AsyncImage(url: item.backdropURL) { image in
-                image.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Color.black
-            }
-            .ignoresSafeArea()
-            .overlay(
-                LinearGradient(colors: [.black.opacity(0.2), .black.opacity(0.95)],
-                               startPoint: .top, endPoint: .bottom)
-                    .ignoresSafeArea()
-            )
+        ZStack(alignment: .top) {
+            backdrop
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Spacer(minLength: 280)
-                    Text(item.displayTitle).font(.largeTitle).bold()
-                    if let year = item.year {
-                        Text(year).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 40) {
+                    header
+                        .padding(.top, 360)
+
+                    if item.kind == .tv {
+                        seasonPicker
+                        episodeRow
                     }
-                    Text(item.overview ?? "")
-                        .lineLimit(5)
-                        .frame(maxWidth: 1100, alignment: .leading)
-                    if let error {
-                        Text(error).foregroundStyle(.red)
-                    }
-                    if item.kind == .movie {
-                        Button {
-                            if let imdbID {
-                                streamTarget = StreamTarget(type: "movie", id: imdbID, title: item.displayTitle,
-                                                           subtitle: item.year, overview: item.overview)
-                            }
-                        } label: {
-                            Label("Find Streams", systemImage: "play.fill")
-                        }
-                        .disabled(imdbID == nil)
-                    } else {
-                        seasonsSection
+
+                    if !recommendations.isEmpty {
+                        RailView(title: "More Like This", items: recommendations)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(80)
+                .padding(.bottom, 80)
             }
         }
+        .ignoresSafeArea()
         .task { await load() }
+        .task(id: selectedSeason) { await loadEpisodes() }
         .sheet(item: $streamTarget) { target in
             StreamListView(target: target)
         }
     }
 
-    private var seasonsSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
+    // MARK: - Sections
+
+    private var backdrop: some View {
+        GeometryReader { geo in
+            AsyncImage(url: item.backdropURL) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Color.black
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+            .overlay(
+                LinearGradient(colors: [.black.opacity(0.85), .black.opacity(0.35), .clear],
+                               startPoint: .leading, endPoint: .trailing)
+            )
+            .overlay(
+                LinearGradient(colors: [.clear, .black.opacity(0.55), .black],
+                               startPoint: .center, endPoint: .bottom)
+            )
+        }
+        .ignoresSafeArea()
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(item.kind == .movie ? "MOVIE" : "SERIES")
+                .font(.caption).bold()
+                .foregroundStyle(.secondary)
+
+            Text(item.displayTitle)
+                .font(.system(size: 72, weight: .bold))
+                .lineLimit(2)
+
+            metadataLine
+
+            if let tagline = details?.tagline, !tagline.isEmpty {
+                Text(tagline).italic().foregroundStyle(.secondary)
+            }
+
+            Text(item.overview ?? "")
+                .font(.callout)
+                .lineLimit(4)
+                .frame(maxWidth: 1100, alignment: .leading)
+
+            if let cast = details?.credits?.cast, !cast.isEmpty {
+                Text("Starring " + cast.prefix(4).map(\.name).joined(separator: ", "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if let error {
+                Text(error).foregroundStyle(.red)
+            }
+
+            HStack(spacing: 28) {
+                playButton
+                Button {
+                    toggleMyList()
+                } label: {
+                    Label(inMyList ? "In My List" : "My List",
+                          systemImage: inMyList ? "checkmark" : "plus")
+                }
+            }
+            .padding(.top, 8)
+        }
+        .padding(.horizontal, 90)
+    }
+
+    private var metadataLine: some View {
+        var parts: [String] = []
+        if let year = item.year { parts.append(year) }
+        if item.kind == .movie, let runtime = details?.runtime, runtime > 0 {
+            parts.append(runtime >= 60 ? "\(runtime / 60)h \(runtime % 60)m" : "\(runtime)m")
+        }
+        if item.kind == .tv, let count = details?.numberOfSeasons, count > 0 {
+            parts.append(count == 1 ? "1 Season" : "\(count) Seasons")
+        }
+        if let genres = details?.genres, !genres.isEmpty {
+            parts.append(genres.prefix(3).map(\.name).joined(separator: ", "))
+        }
+        return HStack(spacing: 14) {
+            Text(parts.joined(separator: "  ·  "))
+            if let rating = item.rating {
+                Label(rating, systemImage: "star.fill").labelStyle(.titleAndIcon)
+            }
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var playButton: some View {
+        if item.kind == .movie {
+            Button {
+                if let imdbID {
+                    streamTarget = StreamTarget(type: "movie", id: imdbID, title: item.displayTitle,
+                                                subtitle: item.year, overview: item.overview)
+                }
+            } label: {
+                Label("Play", systemImage: "play.fill")
+            }
+            .disabled(imdbID == nil)
+        } else {
+            Button {
+                if let first = episodes.first { play(first) }
+            } label: {
+                Label("Play S\(selectedSeason) E1", systemImage: "play.fill")
+            }
+            .disabled(imdbID == nil || episodes.isEmpty)
+        }
+    }
+
+    private var seasonPicker: some View {
+        ScrollViewReader { proxy in
             ScrollView(.horizontal) {
                 HStack(spacing: 20) {
                     ForEach(seasons) { season in
-                        Button(season.name ?? "Season \(season.seasonNumber)") {
+                        Button {
                             selectedSeason = season.seasonNumber
+                        } label: {
+                            HStack(spacing: 8) {
+                                if season.seasonNumber == selectedSeason {
+                                    Image(systemName: "checkmark")
+                                }
+                                Text(season.name ?? "Season \(season.seasonNumber)")
+                            }
                         }
-                        .tint(season.seasonNumber == selectedSeason ? Color.accentColor : nil)
+                        .id(season.seasonNumber)
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, 90)
+                .padding(.vertical, 20)
             }
             .scrollClipDisabled()
-
-            ForEach(episodes) { episode in
-                Button {
-                    if let imdbID {
-                        streamTarget = StreamTarget(
-                            type: "series",
-                            id: "\(imdbID):\(episode.seasonNumber):\(episode.episodeNumber)",
-                            title: item.displayTitle,
-                            subtitle: "S\(episode.seasonNumber)E\(episode.episodeNumber) · \(episode.name ?? "Episode \(episode.episodeNumber)")",
-                            overview: episode.overview
-                        )
-                    }
-                } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(episode.episodeNumber). \(episode.name ?? "Episode")").font(.headline)
-                        if let overview = episode.overview, !overview.isEmpty {
-                            Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .disabled(imdbID == nil)
+            .onChange(of: seasons.count) { _, _ in
+                proxy.scrollTo(selectedSeason, anchor: .leading)
             }
         }
-        .task(id: selectedSeason) { await loadEpisodes() }
+    }
+
+    private var episodeRow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Episodes")
+                .font(.title3).bold()
+                .padding(.horizontal, 90)
+            if loadingEpisodes && episodes.isEmpty {
+                ProgressView()
+                    .frame(height: 330)
+                    .padding(.horizontal, 90)
+            } else {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 44) {
+                        ForEach(episodes) { episode in
+                            Button {
+                                play(episode)
+                            } label: {
+                                EpisodeCard(episode: episode, fallbackImage: item.backdropURL)
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(imdbID == nil)
+                        }
+                    }
+                    .padding(.horizontal, 90)
+                    .padding(.vertical, 30)
+                }
+                .scrollClipDisabled()
+            }
+        }
+    }
+
+    // MARK: - Actions
+
+    private func play(_ episode: TVEpisode) {
+        guard let imdbID else { return }
+        streamTarget = StreamTarget(
+            type: "series",
+            id: "\(imdbID):\(episode.seasonNumber):\(episode.episodeNumber)",
+            title: item.displayTitle,
+            subtitle: "S\(episode.seasonNumber)E\(episode.episodeNumber) · \(episode.name ?? "Episode \(episode.episodeNumber)")",
+            overview: episode.overview
+        )
+    }
+
+    private func toggleMyList() {
+        if inMyList {
+            settings.prefs.myList.removeAll { $0.uid == item.uid }
+        } else {
+            settings.prefs.myList.append(item)
+        }
     }
 
     private func load() async {
         do {
-            imdbID = try await tmdb.imdbID(for: item)
-            if imdbID == nil { error = "No IMDb id for this title, so addons can't look it up." }
-            if item.kind == .tv {
-                seasons = try await tmdb.seasons(tvID: item.id)
-                if let first = seasons.first, !seasons.contains(where: { $0.seasonNumber == selectedSeason }) {
-                    selectedSeason = first.seasonNumber
-                }
+            let loaded = try await tmdb.details(for: item)
+            details = loaded
+            if loaded.externalIds?.imdbId == nil {
+                error = "No IMDb id for this title, so addons can't look it up."
+            }
+            if item.kind == .tv, let first = seasons.first,
+               !seasons.contains(where: { $0.seasonNumber == selectedSeason }) {
+                selectedSeason = first.seasonNumber
             }
         } catch {
             self.error = error.localizedDescription
@@ -130,7 +271,49 @@ struct DetailView: View {
 
     private func loadEpisodes() async {
         guard item.kind == .tv else { return }
+        loadingEpisodes = true
+        defer { loadingEpisodes = false }
         episodes = (try? await tmdb.episodes(tvID: item.id, season: selectedSeason)) ?? []
+    }
+}
+
+/// A 16:9 episode thumbnail with its number, title, runtime and synopsis.
+private struct EpisodeCard: View {
+    let episode: TVEpisode
+    let fallbackImage: URL?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            AsyncImage(url: episode.stillURL ?? fallbackImage) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                ZStack {
+                    Color.gray.opacity(0.3)
+                    Image(systemName: "play.rectangle").font(.largeTitle)
+                }
+            }
+            .frame(width: 440, height: 248)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            Text("E\(episode.episodeNumber) · \(episode.name ?? "Episode \(episode.episodeNumber)")")
+                .font(.callout).bold()
+                .lineLimit(1)
+
+            HStack(spacing: 12) {
+                if let runtime = episode.runtime, runtime > 0 { Text("\(runtime)m") }
+                if let airDate = episode.airDate, !airDate.isEmpty { Text(airDate) }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            if let overview = episode.overview, !overview.isEmpty {
+                Text(overview)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .frame(width: 440, alignment: .leading)
     }
 }
 

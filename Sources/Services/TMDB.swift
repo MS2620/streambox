@@ -4,7 +4,7 @@ enum MediaType: String, Codable, Hashable {
     case movie, tv
 }
 
-struct TMDBItem: Decodable, Hashable {
+struct TMDBItem: Codable, Hashable {
     let id: Int
     let title: String?
     let name: String?
@@ -46,6 +46,28 @@ struct TVEpisode: Decodable, Hashable, Identifiable {
     let seasonNumber: Int
     let name: String?
     let overview: String?
+    let stillPath: String?
+    let runtime: Int?
+    let airDate: String?
+
+    var stillURL: URL? { stillPath.flatMap { URL(string: "https://image.tmdb.org/t/p/w500\($0)") } }
+}
+
+/// Full details for a movie or series, with IMDb id, cast and recommendations in one request.
+struct TMDBDetails: Decodable {
+    struct Genre: Decodable, Hashable { let id: Int; let name: String }
+    struct CastMember: Decodable, Hashable { let name: String }
+    struct Credits: Decodable { let cast: [CastMember] }
+
+    let genres: [Genre]?
+    let runtime: Int?
+    let episodeRunTime: [Int]?
+    let numberOfSeasons: Int?
+    let tagline: String?
+    let seasons: [TVSeasonSummary]?
+    let externalIds: TMDBExternalIDs?
+    let credits: Credits?
+    let recommendations: TMDBPage<TMDBItem>?
 }
 
 /// Uses a TMDB "API Read Access Token" (v4 bearer token).
@@ -101,6 +123,11 @@ struct TMDBClient {
     func search(_ query: String) async throws -> [TMDBItem] {
         let page: TMDBPage<TMDBItem> = try await get("search/multi", ["query": query])
         return page.results.filter { $0.mediaType == "movie" || $0.mediaType == "tv" }
+    }
+
+    func details(for item: TMDBItem) async throws -> TMDBDetails {
+        try await get("\(item.kind.rawValue)/\(item.id)",
+                      ["append_to_response": "external_ids,credits,recommendations"])
     }
 
     func imdbID(for item: TMDBItem) async throws -> String? {

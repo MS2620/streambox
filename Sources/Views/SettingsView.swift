@@ -162,6 +162,55 @@ private struct SettingsRowLabel: View {
     }
 }
 
+// MARK: - Option picker
+
+/// A settings row: title on the left, current value on the right, and a
+/// pop-up menu of choices. Replaces Picker, whose tvOS styles either push a
+/// page (which broke navigation) or hide the title.
+struct OptionPicker<Value: Hashable>: View {
+    let title: String
+    @Binding var selection: Value
+    let options: [(Value, String)]
+
+    init(_ title: String, selection: Binding<Value>, options: [(Value, String)]) {
+        self.title = title
+        self._selection = selection
+        self.options = options
+    }
+
+    private var currentLabel: String {
+        options.first { $0.0 == selection }?.1 ?? "—"
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(options.indices, id: \.self) { index in
+                let option = options[index]
+                Button {
+                    selection = option.0
+                } label: {
+                    if option.0 == selection {
+                        Label(option.1, systemImage: "checkmark")
+                    } else {
+                        Text(option.1)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 16) {
+                Text(title)
+                Spacer()
+                Text(currentLabel)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 // MARK: - Accounts
 
 struct AccountsSettingsView: View {
@@ -225,7 +274,6 @@ struct AccountsSettingsView: View {
             }
         }
         .navigationTitle("Connections")
-        .pickerStyle(.menu)
     }
 
     private func addAddon() async {
@@ -273,18 +321,12 @@ struct LiveTVSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Stream format", selection: $settings.prefs.liveFormat) {
-                    ForEach(LiveStreamFormat.allCases) { Text($0.label).tag($0) }
-                }
-                Picker("Channel switching", selection: $settings.prefs.channelSwitching) {
-                    ForEach(ChannelSwitching.allCases) { Text($0.label).tag($0) }
-                }
-                Picker("Timeshift (pause & rewind)", selection: $settings.prefs.timeshiftMinutes) {
-                    Text("Off").tag(0)
-                    Text("30 minutes").tag(30)
-                    Text("1 hour").tag(60)
-                    Text("2 hours").tag(120)
-                }
+                OptionPicker("Stream format", selection: $settings.prefs.liveFormat,
+                             options: LiveStreamFormat.allCases.map { ($0, $0.label) })
+                OptionPicker("Channel switching", selection: $settings.prefs.channelSwitching,
+                             options: ChannelSwitching.allCases.map { ($0, $0.label) })
+                OptionPicker("Timeshift (pause & rewind)", selection: $settings.prefs.timeshiftMinutes,
+                             options: [(0, "Off"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours")])
             } header: {
                 Text("Streaming")
             } footer: {
@@ -293,9 +335,8 @@ struct LiveTVSettingsView: View {
 
             Section("Channel list") {
                 Toggle("Show what's on now (EPG)", isOn: $settings.prefs.showEPG)
-                Picker("Sort channels by", selection: $settings.prefs.channelSort) {
-                    ForEach(ChannelSort.allCases) { Text($0.label).tag($0) }
-                }
+                OptionPicker("Sort channels by", selection: $settings.prefs.channelSort,
+                             options: ChannelSort.allCases.map { ($0, $0.label) })
                 Toggle("Favourites at the top", isOn: $settings.prefs.favouritesFirst)
                 Toggle("Remember last category", isOn: $settings.prefs.rememberLastCategory)
                 NavigationLink("Show / hide categories") { HiddenCategoriesView() }
@@ -306,14 +347,10 @@ struct LiveTVSettingsView: View {
             }
 
             Section {
-                Picker("User agent", selection: $settings.prefs.iptvUserAgent) {
-                    ForEach(Self.userAgentPresets) { preset in
-                        Text(preset.name).tag(preset.code)
-                    }
-                    if !Self.userAgentPresets.contains(where: { $0.code == settings.prefs.iptvUserAgent }) {
-                        Text("Custom").tag(settings.prefs.iptvUserAgent)
-                    }
-                }
+                OptionPicker("User agent", selection: $settings.prefs.iptvUserAgent,
+                             options: Self.userAgentPresets.map { ($0.code, $0.name) }
+                                + (Self.userAgentPresets.contains { $0.code == settings.prefs.iptvUserAgent }
+                                   ? [] : [(settings.prefs.iptvUserAgent, "Custom")]))
                 TextField("Custom user agent", text: $settings.prefs.iptvUserAgent)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -324,7 +361,6 @@ struct LiveTVSettingsView: View {
             }
         }
         .navigationTitle("Live TV")
-        .pickerStyle(.menu)
     }
 }
 
@@ -361,7 +397,6 @@ struct HiddenCategoriesView: View {
             }
         }
         .navigationTitle("Categories")
-        .pickerStyle(.menu)
         .task {
             guard settings.xtream.isConfigured else {
                 error = "Add your Xtream login in Accounts first."
@@ -386,18 +421,15 @@ struct PlayerSettingsView: View {
     var body: some View {
         Form {
             Section("Audio language") {
-                Picker("Preferred audio", selection: $settings.prefs.audioLanguage) {
-                    ForEach(LanguageOptions.audio) { Text($0.name).tag($0.code) }
-                }
+                OptionPicker("Preferred audio", selection: $settings.prefs.audioLanguage,
+                             options: LanguageOptions.audio.map { ($0.code, $0.name) })
             }
 
             Section("Remote") {
-                Picker("Skip back (◀)", selection: $settings.prefs.seekBackSeconds) {
-                    ForEach(Self.seekOptions, id: \.self) { Text("\($0) seconds").tag($0) }
-                }
-                Picker("Skip forward (▶)", selection: $settings.prefs.seekForwardSeconds) {
-                    ForEach(Self.seekOptions, id: \.self) { Text("\($0) seconds").tag($0) }
-                }
+                OptionPicker("Skip back (◀)", selection: $settings.prefs.seekBackSeconds,
+                             options: Self.seekOptions.map { ($0, "\($0) seconds") })
+                OptionPicker("Skip forward (▶)", selection: $settings.prefs.seekForwardSeconds,
+                             options: Self.seekOptions.map { ($0, "\($0) seconds") })
             }
 
             Section {
@@ -419,7 +451,6 @@ struct PlayerSettingsView: View {
             }
         }
         .navigationTitle("Player")
-        .pickerStyle(.menu)
     }
 }
 
@@ -432,18 +463,16 @@ struct SubtitleSettingsView: View {
         Form {
             Section {
                 Toggle("Turn subtitles on automatically", isOn: $settings.prefs.autoSubtitles)
-                Picker("Subtitle language", selection: $settings.prefs.subtitleLanguage) {
-                    ForEach(LanguageOptions.audio) { Text($0.name).tag($0.code) }
-                }
+                OptionPicker("Subtitle language", selection: $settings.prefs.subtitleLanguage,
+                             options: LanguageOptions.audio.map { ($0.code, $0.name) })
                 .disabled(!settings.prefs.autoSubtitles)
             } footer: {
                 Text("When on, subtitles in this language are picked automatically if the video has them.")
             }
 
             Section("Appearance") {
-                Picker("Size", selection: $settings.prefs.subtitleSize) {
-                    ForEach(SubtitleSize.allCases) { Text($0.label).tag($0) }
-                }
+                OptionPicker("Size", selection: $settings.prefs.subtitleSize,
+                             options: SubtitleSize.allCases.map { ($0, $0.label) })
                 Text("The quick brown fox jumps over the lazy dog")
                     .font(.system(size: settings.prefs.subtitleSize.points, weight: .semibold))
                     .shadow(color: .black, radius: 3)
@@ -452,7 +481,6 @@ struct SubtitleSettingsView: View {
             }
         }
         .navigationTitle("Subtitles")
-        .pickerStyle(.menu)
     }
 }
 
@@ -464,19 +492,16 @@ struct StreamSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Maximum resolution", selection: $settings.prefs.maxResolution) {
-                    ForEach(MaxResolution.allCases) { Text($0.label).tag($0) }
-                }
-                Picker("Sort streams", selection: $settings.prefs.streamSort) {
-                    ForEach(StreamSort.allCases) { Text($0.label).tag($0) }
-                }
+                OptionPicker("Maximum resolution", selection: $settings.prefs.maxResolution,
+                             options: MaxResolution.allCases.map { ($0, $0.label) })
+                OptionPicker("Sort streams", selection: $settings.prefs.streamSort,
+                             options: StreamSort.allCases.map { ($0, $0.label) })
                 Toggle("Play the first stream automatically", isOn: $settings.prefs.autoPlayFirstStream)
             } footer: {
                 Text("Resolution is read from the addon's stream labels; streams without one are always shown.")
             }
         }
         .navigationTitle("Streams")
-        .pickerStyle(.menu)
     }
 }
 
@@ -488,12 +513,10 @@ struct ContentSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Language", selection: $settings.prefs.tmdbLanguage) {
-                    ForEach(LanguageOptions.tmdb) { Text($0.name).tag($0.code) }
-                }
-                Picker("Region", selection: $settings.prefs.tmdbRegion) {
-                    ForEach(LanguageOptions.regions) { Text($0.name).tag($0.code) }
-                }
+                OptionPicker("Language", selection: $settings.prefs.tmdbLanguage,
+                             options: LanguageOptions.tmdb.map { ($0.code, $0.name) })
+                OptionPicker("Region", selection: $settings.prefs.tmdbRegion,
+                             options: LanguageOptions.regions.map { ($0.code, $0.name) })
             } header: {
                 Text("Catalogue")
             } footer: {
@@ -501,6 +524,5 @@ struct ContentSettingsView: View {
             }
         }
         .navigationTitle("Content")
-        .pickerStyle(.menu)
     }
 }

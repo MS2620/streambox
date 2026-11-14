@@ -19,9 +19,9 @@ struct RootView: View {
         TabView {
             CatalogView(hero: Catalog.homeHero, sections: Catalog.home, showsFavouriteChannels: true)
                 .tabItem { Label("Home", systemImage: "house") }
-            CatalogView(hero: Catalog.moviesHero, sections: Catalog.movies)
+            CatalogView(hero: Catalog.moviesHero, sections: Catalog.movies, myListKind: .movie)
                 .tabItem { Label("Movies", systemImage: "film") }
-            CatalogView(hero: Catalog.seriesHero, sections: Catalog.series)
+            CatalogView(hero: Catalog.seriesHero, sections: Catalog.series, myListKind: .tv)
                 .tabItem { Label("Series", systemImage: "play.tv") }
             LiveTVView()
                 .tabItem { Label("Live TV", systemImage: "antenna.radiowaves.left.and.right") }

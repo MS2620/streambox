@@ -94,6 +94,9 @@ struct Preferences: Codable, Equatable {
     var streamSort: StreamSort = .quality
     var autoPlayFirstStream = false
 
+    // My List (saved movies and series), most recent last
+    var myList: [TMDBItem] = []
+
     // Live TV
     var liveFormat: LiveStreamFormat = .hls
     var channelSwitching: ChannelSwitching = .fast
