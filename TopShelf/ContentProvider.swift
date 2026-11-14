@@ -19,6 +19,11 @@ final class ContentProvider: TVTopShelfContentProvider {
             section.title = "Continue Watching"
             sections.append(section)
         }
+        if !snapshot.upcoming.isEmpty {
+            let section = TVTopShelfItemCollection(items: snapshot.upcoming.map(Self.item))
+            section.title = "Coming up"
+            sections.append(section)
+        }
         completionHandler(TVTopShelfSectionedContent(sections: sections))
     }
 

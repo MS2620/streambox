@@ -30,6 +30,17 @@ final class LiveScores: ObservableObject {
             // A fresher score from a refresh wins over the one the schedule had.
             if let score = fixture.score, scores[fixture.id] == nil { scores[fixture.id] = score }
         }
+        TopShelfPublisher.publish()
+    }
+
+    /// Followed teams' games and race sessions that start later today or tomorrow, soonest first.
+    var upcomingFixtures: [Fixture] {
+        let now = Date()
+        let calendar = Calendar.current
+        guard let endOfTomorrow = calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: now)) else { return [] }
+        return tracked.values
+            .filter { $0.guideTime > now && $0.guideTime < endOfTomorrow }
+            .sorted { $0.guideTime < $1.guideTime }
     }
 
     func recentFixtures(excluding ids: Set<String>) -> [Fixture] {
