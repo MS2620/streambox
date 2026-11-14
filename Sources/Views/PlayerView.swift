@@ -24,6 +24,10 @@ struct PlaybackRequest: Identifiable {
     var isLive: Bool = false
     var httpHeaders: [String: String] = [:]
     var live: LiveContext? = nil
+    /// Cartoons and anime: may use the line-art upscaler, which also takes 1080p.
+    var isAnimation = false
+    /// Lines the addon's label claims (1080, 720…), 0 when unknown.
+    var sourceLines = 0
 }
 
 /// Full-screen player for live TV, movies and series, built on AetherEngine.
@@ -547,6 +551,16 @@ private struct AetherPlaybackView: View {
 
     // MARK: - Loading
 
+    /// The engine's automatic upscaler (VideoToolbox super resolution) only takes video below
+    /// 1080p; the line-art one is the only one that takes 1080p. A stream labelled below 1080p
+    /// keeps the automatic one when that's switched on, since it's made for live action.
+    private func vodScaler(wants1080p: Bool, prefs: Preferences) -> UpscaleScaler {
+        guard wants1080p else { return .automatic }
+        let lines = current.sourceLines
+        if prefs.upscaleLowResolution, lines > 0, lines < 1080 { return .automatic }
+        return .lineArt
+    }
+
     private func load() async {
         loadError = nil
         let prefs = settings.prefs
@@ -557,9 +571,16 @@ private struct AetherPlaybackView: View {
 
         let options: LoadOptions
         if current.isLive {
+            let matchLive = prefs.matchContent && prefs.matchContentLive
             options = LoadOptions(
+                // Without this the engine still sets the TV's refresh rate itself,
+                // which blanks the screen for a moment on every channel.
+                suppressDisplayCriteria: !matchLive,
                 httpHeaders: current.httpHeaders,
-                upscalesLowResolutionVideo: prefs.upscaleLowResolution,
+                upscalesLowResolutionVideo: prefs.upscaleLowResolution || prefs.upscale1080p == .everything,
+                // A channel's resolution isn't known before it loads, so "Everything" always
+                // takes the 1080p upscaler on live TV.
+                upscaleScaler: prefs.upscale1080p == .everything ? .lineArt : .automatic,
                 // Switching the TV's refresh rate blanks the screen for a moment on every
                 // channel change, so live TV only does it when asked (Settings → Live TV).
                 matchContentEnabled: prefs.matchContent && prefs.matchContentLive,
@@ -575,9 +596,12 @@ private struct AetherPlaybackView: View {
                 audioShaping: shaping
             )
         } else {
+            let wants1080p = prefs.upscale1080p == .everything
+                || (prefs.upscale1080p == .animation && current.isAnimation)
             options = LoadOptions(
                 httpHeaders: current.httpHeaders,
-                upscalesLowResolutionVideo: prefs.upscaleLowResolution,
+                upscalesLowResolutionVideo: prefs.upscaleLowResolution || wants1080p,
+                upscaleScaler: vodScaler(wants1080p: wants1080p, prefs: prefs),
                 matchContentEnabled: prefs.matchContent,
                 preferredAudioLanguages: [prefs.audioLanguage],
                 preferredSubtitleLanguages: subtitleLanguages,

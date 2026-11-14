@@ -126,8 +126,12 @@ struct LiveTVView: View {
                                        description: Text(error))
             } else {
                 HStack(alignment: .top, spacing: 30) {
+                    // Focus sections let Right / Left jump between the groups and the
+                    // channels even when nothing lines up exactly (the preview box sits
+                    // beside the top of the group list and can't take focus).
                     sidebar
                         .frame(width: 400)
+                        .focusSection()
                     Group {
                         if prefs.liveLayout == .guide {
                             guide
@@ -136,6 +140,7 @@ struct LiveTVView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .focusSection()
                 }
                 .padding(.top, 10)
             }
@@ -788,6 +793,9 @@ private struct LivePreview: View {
             guard let url = client.liveURL(for: channel, format: settings.prefs.liveFormat) else { return }
             engine.volume = 0
             let options = LoadOptions(
+                // The preview must never switch the TV's display mode: that blanks the
+                // whole screen while you browse the guide.
+                suppressDisplayCriteria: true,
                 httpHeaders: client.requestHeaders,
                 matchContentEnabled: false,
                 isLive: true,

@@ -749,8 +749,10 @@ struct PlayerSettingsView: View {
                 SettingsToggleRow("Match content (frame rate & HDR)", icon: "tv", isOn: $settings.prefs.matchContent)
                 SettingsToggleRow("Upscale low-resolution video", icon: "arrow.up.left.and.arrow.down.right",
                                   isOn: $settings.prefs.upscaleLowResolution)
+                SettingsOptionRow("Upscale 1080p", icon: "sparkles", selection: $settings.prefs.upscale1080p,
+                                  options: Upscale1080p.allCases.map { ($0, $0.label) })
             }
-            SettingsNote("Match content switches your TV to the video's frame rate and HDR mode, when Match Content is also on in the Apple TV's own settings.")
+            SettingsNote("Match content switches your TV to the video's frame rate and HDR mode, when Match Content is also on in the Apple TV's own settings. Upscaling needs tvOS 26 or later and SDR video. \"Upscale low-resolution video\" covers video below 1080p. \"Upscale 1080p\" uses a sharper upscaler made for animation, the only one that takes 1080p: \"Animation only\" uses it on titles TMDB lists as Animation, \"Everything\" on all movies, series and live TV. On live action it can look slightly painted. Streams labelled below 1080p keep the low-resolution upscaler when that's on.")
 
             GlassPanel("Audio") {
                 SettingsToggleRow("Dialogue boost", icon: "person.wave.2", isOn: $settings.prefs.dialogueBoost)
