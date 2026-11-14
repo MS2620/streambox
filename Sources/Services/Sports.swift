@@ -89,6 +89,11 @@ struct Fixture: Identifiable, Hashable {
     var keywords: [String] = []
     /// Names of the user's teams involved.
     var followed: [String] = []
+    /// Score when the schedule was loaded; `LiveScores` keeps it current.
+    var score: FixtureScore? = nil
+    /// ESPN's event ID and the league scoreboard that lists it, for live score updates.
+    var eventID: String? = nil
+    var scoreboardPath: String? = nil
 
     var isRace: Bool { !sessions.isEmpty }
 
@@ -97,6 +102,22 @@ struct Fixture: Identifiable, Hashable {
         let soon = Date().addingTimeInterval(-2 * 3600)
         return sessions.first { $0.date > soon }?.date ?? date
     }
+}
+
+/// A game's score and clock as ESPN reports it.
+struct FixtureScore: Hashable {
+    enum Phase: Hashable { case live, halfTime, finished }
+
+    let phase: Phase
+    let home: String
+    let away: String
+    /// "67'", "HT", "FT", "AET"…
+    let clock: String
+    /// "Second Half", "Half-time", "Full time"…
+    let period: String?
+
+    /// "2 – 1".
+    var line: String { "\(home) – \(away)" }
 }
 
 // MARK: - Dates
@@ -134,6 +155,11 @@ enum SportsDate {
 
     static func parse(_ string: String) -> Date? {
         internet.date(from: string) ?? noSeconds.date(from: string) ?? fractional.date(from: string)
+    }
+
+    /// ESPN's `dates` parameter for any two dates.
+    static func rangeParameter(from start: Date, to end: Date) -> String {
+        "\(range.string(from: start))-\(range.string(from: end))"
     }
 
     /// "20261114-20270113" for ESPN's `dates` parameter.
@@ -231,13 +257,26 @@ private struct ESPNEvent: Decodable {
     struct Competitor: Decodable {
         let homeAway: String?
         let team: ESPNTeam?
+        /// Scoreboards send the score as a string, team schedules as an object.
+        let score: String?
 
-        private enum CodingKeys: String, CodingKey { case homeAway, team }
+        private enum CodingKeys: String, CodingKey { case homeAway, team, score }
+        private struct ScoreValue: Decodable {
+            let value: Double?
+            let displayValue: String?
+        }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             homeAway = try? c.decode(String.self, forKey: .homeAway)
             team = try? c.decode(ESPNTeam.self, forKey: .team)
+            if let text = try? c.decode(String.self, forKey: .score) {
+                score = text
+            } else if let value = try? c.decode(ScoreValue.self, forKey: .score) {
+                score = value.displayValue ?? value.value.map { String(Int($0)) }
+            } else {
+                score = nil
+            }
         }
     }
     struct Broadcast: Decodable {
@@ -246,8 +285,24 @@ private struct ESPNEvent: Decodable {
         let names: [String]?
     }
     struct Status: Decodable {
-        struct StatusType: Decodable { let state: String? }
+        struct StatusType: Decodable {
+            let name: String?
+            let state: String?
+            let completed: Bool?
+            let description: String?
+            let shortDetail: String?
+            let detail: String?
+        }
         let type: StatusType?
+        let displayClock: String?
+
+        private enum CodingKeys: String, CodingKey { case type, displayClock }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            type = try? c.decode(StatusType.self, forKey: .type)
+            displayClock = try? c.decode(String.self, forKey: .displayClock)
+        }
     }
 
     /// Present on "all competitions" schedules: which competition this game is in.
@@ -400,7 +455,9 @@ struct ESPNClient {
 
         for path in paths {
             guard let response = try? await fetch(ESPNEventsResponse.self, path) else { continue }
-            let fixtures = Self.window((response.events ?? []).compactMap { fixture(from: $0, teams: [team]) }, days: days)
+            let fixtures = Self.window((response.events ?? []).compactMap {
+                fixture(from: $0, teams: [team], leagueSlug: team.league)
+            }, days: days)
             if !fixtures.isEmpty { return fixtures }
         }
         return []
@@ -419,7 +476,9 @@ struct ESPNClient {
                         guard let response = try? await self.fetch(ESPNEventsResponse.self, path) else { continue }
                         let events = response.events ?? []
                         if events.isEmpty { continue }
-                        return events.compactMap { self.fixture(from: $0, teams: teams, competition: league.name) }
+                        return events.compactMap {
+                            self.fixture(from: $0, teams: teams, competition: league.name, leagueSlug: league.slug)
+                        }
                     }
                     return []
                 }
@@ -429,22 +488,27 @@ struct ESPNClient {
         return Self.window(found, days: days)
     }
 
-    /// Keeps fixtures from 3 hours ago (still on) up to `days` ahead, soonest first.
-    private static func window(_ fixtures: [Fixture], days: Int) -> [Fixture] {
-        let from = Date().addingTimeInterval(-3 * 3600)
+    /// Keeps fixtures that kicked off up to 5 hours ago (on now, or finished and shown with
+    /// the final score for a few hours) up to `days` ahead, soonest first.
+    static func window(_ fixtures: [Fixture], days: Int) -> [Fixture] {
+        let from = Date().addingTimeInterval(-5 * 3600)
         let until = Date().addingTimeInterval(TimeInterval(days) * 86_400)
         return fixtures.filter { $0.date > from && $0.date <= until }.sorted { $0.date < $1.date }
     }
 
     /// Builds a fixture if any of `teams` is playing in the event.
-    private func fixture(from event: ESPNEvent, teams: [FavouriteTeam], competition fallback: String? = nil) -> Fixture? {
+    private func fixture(from event: ESPNEvent, teams: [FavouriteTeam], competition fallback: String? = nil,
+                         leagueSlug: String? = nil) -> Fixture? {
         guard let competition = event.competitions?.first,
               let competitors = competition.competitors,
               let date = SportsDate.parse(event.date) else { return nil }
         let playing = teams.filter { team in competitors.contains { $0.team?.id == team.teamID } }
         guard let first = playing.first else { return nil }
-        // Skip finished games.
-        if competition.status?.type?.state == "post" { return nil }
+        // Postponed and cancelled games are left out; finished ones stay a while with their score.
+        if let name = competition.status?.type?.name,
+           name.contains("POSTPONED") || name.contains("CANCELED") || name.contains("CANCELLED") {
+            return nil
+        }
 
         func side(_ team: ESPNTeam) -> Fixture.Side {
             let followed = playing.first { $0.teamID == team.id }
@@ -475,8 +539,73 @@ struct ESPNClient {
             subtitle: competition.venue?.fullName,
             broadcasts: Array(Set(broadcasts)).sorted(),
             keywords: Array(Set((homeTeam?.keywords ?? []) + (awayTeam?.keywords ?? []))),
-            followed: playing.map(\.name)
+            followed: playing.map(\.name),
+            score: Self.score(for: event),
+            eventID: event.id,
+            scoreboardPath: (event.league?.slug ?? leagueSlug).flatMap {
+                $0.isEmpty || $0 == "all" ? nil : "/sports/\(first.sport)/\($0)/scoreboard"
+            }
         )
+    }
+
+    /// The score and clock of a game that has started, nil before kick-off.
+    private static func score(for event: ESPNEvent) -> FixtureScore? {
+        guard let competition = event.competitions?.first,
+              let status = competition.status?.type,
+              let competitors = competition.competitors else { return nil }
+        let name = status.name ?? ""
+        let home = competitors.first { $0.homeAway == "home" } ?? competitors.first
+        let away = competitors.first { $0.homeAway == "away" } ?? competitors.last
+        let homeScore = home?.score ?? "0"
+        let awayScore = away?.score ?? "0"
+
+        switch status.state {
+        case "in":
+            if name.contains("HALFTIME") {
+                return FixtureScore(phase: .halfTime, home: homeScore, away: awayScore,
+                                    clock: "HT", period: "Half-time")
+            }
+            let clock = status.shortDetail ?? competition.status?.displayClock ?? "LIVE"
+            return FixtureScore(phase: .live, home: homeScore, away: awayScore,
+                                clock: clock, period: status.description)
+        case "post":
+            guard status.completed != false, home?.score != nil else { return nil }
+            return FixtureScore(phase: .finished, home: homeScore, away: awayScore,
+                                clock: status.shortDetail ?? "FT", period: "Full time")
+        default:
+            return nil
+        }
+    }
+
+    /// Current scores for games under way, from each league's scoreboard (one request per league).
+    func liveScores(for fixtures: [Fixture]) async -> [String: FixtureScore] {
+        var groups: [String: [Fixture]] = [:]
+        for fixture in fixtures {
+            guard let path = fixture.scoreboardPath, fixture.eventID != nil else { continue }
+            groups[path, default: []].append(fixture)
+        }
+        var result: [String: FixtureScore] = [:]
+        await withTaskGroup(of: [String: FixtureScore].self) { group in
+            for (path, list) in groups {
+                let dates = list.map(\.date)
+                guard let first = dates.min(), let last = dates.max() else { continue }
+                let range = SportsDate.rangeParameter(from: first.addingTimeInterval(-86_400),
+                                                      to: last.addingTimeInterval(86_400))
+                group.addTask {
+                    guard let response = try? await self.fetch(ESPNEventsResponse.self, "\(path)?dates=\(range)&limit=300")
+                    else { return [:] }
+                    var found: [String: FixtureScore] = [:]
+                    for event in response.events ?? [] {
+                        guard let fixture = list.first(where: { $0.eventID == event.id }),
+                              let score = Self.score(for: event) else { continue }
+                        found[fixture.id] = score
+                    }
+                    return found
+                }
+            }
+            for await part in group { result.merge(part) { _, new in new } }
+        }
+        return result
     }
 }
 
@@ -517,7 +646,15 @@ enum SportsLoader {
                 merged[fixture.id] = fixture
             }
         }
-        return merged.values.sorted { $0.date != $1.date ? $0.date < $1.date : $0.id < $1.id }
+        // Games under way or just finished that the schedules no longer list
+        // (football's fixture lists drop a game once it starts).
+        let followedNames = Set(teams.map(\.name))
+        for fixture in await LiveScores.shared.recentFixtures(excluding: Set(merged.keys)) {
+            if !followedNames.isDisjoint(with: fixture.followed) { merged[fixture.id] = fixture }
+        }
+        let sorted = merged.values.sorted { $0.date != $1.date ? $0.date < $1.date : $0.id < $1.id }
+        await LiveScores.shared.track(sorted)
+        return sorted
     }
 }
 

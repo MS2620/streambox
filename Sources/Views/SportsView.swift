@@ -6,6 +6,7 @@ struct SportsView: View {
     @EnvironmentObject var settings: AppSettings
     @State private var fixtures: [Fixture] = []
     @State private var loading = false
+    @ObservedObject private var liveScores = LiveScores.shared
 
     private var teams: [FavouriteTeam] { settings.prefs.favouriteTeams }
     private var days: Int { settings.prefs.sportsDaysAhead }
@@ -80,7 +81,9 @@ struct SportsView: View {
                     if !teams.isEmpty {
                         row("My Teams") {
                             ForEach(teams) { team in
-                                let next = fixtures.first { $0.followed.contains(team.name) }
+                                let next = fixtures.first {
+                                    $0.followed.contains(team.name) && liveScores.score(for: $0)?.phase != .finished
+                                }
                                 if let next {
                                     NavigationLink(value: next) {
                                         TeamTile(team: team, next: next)
@@ -100,6 +103,7 @@ struct SportsView: View {
             }
             .background(AppBackground())
             .task(id: loadKey) { await load() }
+            .task { await liveScores.run() }
             .navigationDestination(for: Fixture.self) { fixture in
                 FixtureDetailView(fixture: fixture)
             }
@@ -216,16 +220,33 @@ struct FixtureArt: View {
 struct FixtureTile: View {
     let fixture: Fixture
     let width: CGFloat
+    @ObservedObject private var liveScores = LiveScores.shared
 
     private var isLive: Bool { fixture.guideTime <= Date() }
+    private var score: FixtureScore? { liveScores.score(for: fixture) }
 
     private var detail: String {
-        var parts = ["\(DayFormat.label(fixture.guideTime)) \(DayFormat.time(fixture.guideTime))"]
-        if let session = fixture.sessions.first(where: { $0.date == fixture.guideTime }) {
-            parts.append(session.name)
+        if let score {
+            return [fixture.competition, score.period].compactMap { $0 }.joined(separator: " · ")
         }
+        let session = fixture.sessions.first(where: { $0.date == fixture.guideTime })
+        if fixture.isRace && isLive {
+            return "\(session?.name ?? "Race") in progress · \(fixture.competition)"
+        }
+        var parts = ["\(DayFormat.label(fixture.guideTime)) \(DayFormat.time(fixture.guideTime))"]
+        if let session { parts.append(session.name) }
         parts.append(fixture.competition)
         return parts.joined(separator: " · ")
+    }
+
+    /// Top-left pill: kick-off time, LIVE, HT or FT.
+    private var pill: (text: String, color: Color) {
+        switch score?.phase {
+        case .finished: return (score?.clock ?? "FT", Color.black.opacity(0.6))
+        case .halfTime: return ("HT", Color.black.opacity(0.6))
+        case .live: return ("LIVE", Theme.live)
+        case nil: return isLive ? ("LIVE", Theme.live) : (DayFormat.time(fixture.guideTime), Color.black.opacity(0.5))
+        }
     }
 
     var body: some View {
@@ -233,13 +254,16 @@ struct FixtureTile: View {
             FocusFrame(cornerRadius: 22) {
                 FixtureArt(fixture: fixture)
                     .frame(width: width, height: width * 9 / 16)
+                    .overlay {
+                        if let score { ScoreBadge(score: score, size: width / 440) }
+                    }
                     .overlay(alignment: .topLeading) {
-                        Text(isLive ? "LIVE" : DayFormat.time(fixture.guideTime))
+                        Text(pill.text)
                             .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(Color.white)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 6)
-                            .background(Capsule().fill(isLive ? Theme.live : Color.black.opacity(0.5)))
+                            .background(Capsule().fill(pill.color))
                             .padding(16)
                     }
             }
@@ -253,6 +277,37 @@ struct FixtureTile: View {
                 .lineLimit(1)
                 .frame(width: width, alignment: .leading)
         }
+    }
+}
+
+/// The score between the two crests, with the minute (red while live) underneath.
+struct ScoreBadge: View {
+    let score: FixtureScore
+    /// 1 at the 440-point Home tile.
+    var size: CGFloat = 1
+
+    private var caption: String {
+        switch score.phase {
+        case .live: return score.clock
+        case .halfTime: return "Half-time"
+        case .finished: return score.clock == "FT" ? "Full time" : score.clock
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(score.line)
+                .font(.system(size: 46 * size, weight: .heavy))
+                .monospacedDigit()
+            Text(caption)
+                .font(.system(size: 18 * size, weight: .bold))
+                .foregroundStyle(score.phase == .live ? Theme.live : Color.white.opacity(0.8))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Color.white)
+        .padding(.horizontal, 18 * size)
+        .padding(.vertical, 10 * size)
+        .background(RoundedRectangle(cornerRadius: 18 * size, style: .continuous).fill(Color.black.opacity(0.55)))
     }
 }
 
@@ -347,7 +402,9 @@ struct FixtureDetailView: View {
     @ObservedObject private var store = ChannelSearchStore.shared
     @State private var playback: PlaybackRequest?
     @State private var showingSportsChannels = false
+    @ObservedObject private var liveScores = LiveScores.shared
 
+    private var score: FixtureScore? { liveScores.score(for: fixture) }
     private var entry: ChannelSearchStore.Entry? { store.entries[fixture.id] }
     private var result: ChannelSearch { entry?.result ?? ChannelSearch() }
     private var searching: Bool { entry?.searching ?? true }
@@ -373,6 +430,20 @@ struct FixtureDetailView: View {
                             .font(.system(size: 46, weight: .heavy))
                             .lineLimit(2)
                             .minimumScaleFactor(0.6)
+                        if let score {
+                            HStack(spacing: 12) {
+                                Text(score.phase == .live ? "● LIVE \(score.clock)" : score.clock)
+                                    .font(.system(size: 20, weight: .heavy))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 5)
+                                    .background(Capsule().fill(score.phase == .live ? Theme.live : Color.black.opacity(0.45)))
+                                if let period = score.period {
+                                    Text(period)
+                                        .font(.system(size: 22, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.85))
+                                }
+                            }
+                        }
                         if let subtitle = fixture.subtitle, !subtitle.isEmpty {
                             Label(subtitle, systemImage: fixture.isRace ? "flag.checkered" : "mappin.and.ellipse")
                                 .font(.system(size: 23, weight: .medium))
@@ -421,6 +492,7 @@ struct FixtureDetailView: View {
         }
         .background(AppBackground())
         .task { search(force: false) }
+        .task { await liveScores.run() }
         .fullScreenCover(item: $playback) { request in
             PlayerView(request: request).ignoresSafeArea()
         }
@@ -434,9 +506,12 @@ struct FixtureDetailView: View {
         return "Checking channels… \(entry.checked) of \(entry.total)"
     }
 
-    /// "Portugal – Denmark" (ESPN writes "Portugal v Denmark").
+    /// "Portugal – Denmark" (ESPN writes "Portugal v Denmark"), or "Portugal 2 – 1 Denmark" once started.
     private var displayTitle: String {
-        fixture.title.replacingOccurrences(of: " v ", with: " – ")
+        if let score, let home = fixture.home?.name, let away = fixture.away?.name {
+            return "\(home) \(score.line) \(away)"
+        }
+        return fixture.title.replacingOccurrences(of: " v ", with: " – ")
     }
 
     /// "Saturday, 14 November at 19:45".

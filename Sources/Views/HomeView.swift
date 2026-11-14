@@ -734,6 +734,7 @@ private struct UpcomingFixturesRow: View {
             let all = await SportsLoader.upcoming(teams: teams, days: settings.prefs.sportsDaysAhead)
             fixtures = Array(all.prefix(12))
         }
+        .task { await LiveScores.shared.run() }
         .onChange(of: focusedID) { _, id in
             guard let id, let fixture = fixtures.first(where: { $0.id == id }) else { return }
             onFocus(HeroContent(key: "fixture-\(id)",
