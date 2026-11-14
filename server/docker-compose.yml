@@ -1,0 +1,20 @@
+# StreamBox backup service, reached through the Cloudflare Tunnel.
+# In the tunnel, point backup.<your domain> at:  http://streambox-backup:8080
+services:
+  streambox-backup:
+    build: https://github.com/MS2620/streambox.git#main:server
+    container_name: streambox-backup
+    restart: unless-stopped
+    environment:
+      STREAMBOX_BACKUP_PASSWORD: ${STREAMBOX_BACKUP_PASSWORD:?set it in .env}
+    volumes:
+      - streambox-backups:/data
+    networks:
+      - cloudflare
+
+volumes:
+  streambox-backups:
+
+networks:
+  cloudflare:
+    external: true
