@@ -67,7 +67,7 @@ private enum Panel: Identifiable {
     }
 }
 
-private enum Control: Hashable { case aspect, favourite, channels, subtitles, audio, more }
+private enum Control: Hashable { case aspect, favourite, channels, subtitles, audio, more, progress }
 
 private struct PanelOption: Identifiable {
     let id: String
@@ -156,6 +156,20 @@ private struct AetherPlaybackView: View {
                             fontSize: prefs.subtitleSize.points)
                 .ignoresSafeArea()
 
+            // Catches the remote while the buttons are hidden. It is a sibling of the
+            // controls (not their parent), so it never steals focus navigation from them.
+            if mode != .controls && panel == nil {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .focusable()
+                    .focused($rootFocused)
+                    .focusEffectDisabled()
+                    .onTapGesture { showControls() }
+                    .onMoveCommand { direction in handleMove(direction) }
+                    .onAppear { rootFocused = true }
+                    .ignoresSafeArea()
+            }
+
             if errorMessage == nil && (!engine.hasFirstFrameReadyForDisplay || engine.isBuffering) {
                 ProgressView().scaleEffect(1.5)
             }
@@ -184,14 +198,7 @@ private struct AetherPlaybackView: View {
                 .transition(.opacity)
             }
         }
-        .focusable(mode != .controls && panel == nil)
-        .focused($rootFocused)
-        .focusEffectDisabled()
         .onPlayPauseCommand { togglePause() }
-        .onTapGesture {
-            if mode != .controls && panel == nil { showControls() }
-        }
-        .onMoveCommand { direction in handleMove(direction) }
         .onExitCommand { handleExit() }
         .task(id: current.id) { await load() }
         .task(id: current.live?.channel.id) { await epgLoop() }
@@ -299,7 +306,7 @@ private struct AetherPlaybackView: View {
                         Text(Self.time(end))
                     }
                     .font(.caption).monospacedDigit()
-                    ProgressBar(fraction: fraction)
+                    scrubbableBar(fraction: fraction)
                     ZStack(alignment: .trailing) {
                         PositionMarker(fraction: fraction, label: Self.time(playhead), live: clock.behindLiveSeconds < 5)
                         if let next = epgNext, let nextStart = next.start {
@@ -318,7 +325,7 @@ private struct AetherPlaybackView: View {
         } else if engine.duration > 0 {
             let fraction = clock.currentTime / engine.duration
             VStack(alignment: .leading, spacing: 8) {
-                ProgressBar(fraction: fraction)
+                scrubbableBar(fraction: fraction)
                 ZStack(alignment: .trailing) {
                     PositionMarker(fraction: fraction, label: Self.duration(clock.currentTime), live: false)
                     Text("-" + Self.duration(max(engine.duration - clock.currentTime, 0)))
@@ -326,6 +333,26 @@ private struct AetherPlaybackView: View {
                 }
             }
         }
+    }
+
+    /// The progress bar. With the buttons shown, press down to focus it, then
+    /// left / right to rewind / fast-forward; up returns to the buttons.
+    private func scrubbableBar(fraction: Double) -> some View {
+        ProgressBar(fraction: fraction, highlighted: focusedControl == .progress)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .focusable(mode == .controls)
+            .focused($focusedControl, equals: .progress)
+            .focusEffectDisabled()
+            .onMoveCommand { direction in
+                switch direction {
+                case .left: seek(by: -Double(prefs.seekBackSeconds))
+                case .right: seek(by: Double(prefs.seekForwardSeconds))
+                case .up: focusedControl = .aspect
+                default: break
+                }
+                scheduleHide()
+            }
     }
 
     private var controlsPill: some View {
@@ -591,10 +618,6 @@ private struct AetherPlaybackView: View {
     // MARK: - Remote handling
 
     private func handleMove(_ direction: MoveCommandDirection) {
-        guard mode != .controls, panel == nil else {
-            scheduleHide()
-            return
-        }
         switch direction {
         case .left: seek(by: -Double(prefs.seekBackSeconds))
         case .right: seek(by: Double(prefs.seekForwardSeconds))
@@ -626,13 +649,17 @@ private struct AetherPlaybackView: View {
     /// Info only (no buttons), e.g. after a seek or channel change.
     private func showInfo() {
         if mode == .hidden { withAnimation(.easeOut(duration: 0.2)) { mode = .info } }
-        scheduleHide(after: 4)
+        scheduleHide(after: mode == .controls ? 6 : 4)
     }
 
     private func hide() {
         hideTask?.cancel()
+        focusedControl = nil
         withAnimation(.easeIn(duration: 0.2)) { mode = .hidden }
-        rootFocused = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(50))
+            rootFocused = true
+        }
     }
 
     private func scheduleHide(after seconds: Double = 6) {
@@ -844,16 +871,27 @@ private struct PanelRow: View {
 
 private struct ProgressBar: View {
     let fraction: Double
+    var highlighted = false
 
     var body: some View {
+        let clamped = min(max(fraction, 0), 1)
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule().fill(.white.opacity(0.25))
                 Capsule().fill(.white)
-                    .frame(width: geo.size.width * min(max(fraction, 0), 1))
+                    .frame(width: geo.size.width * clamped)
+                if highlighted {
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 26, height: 26)
+                        .shadow(radius: 4)
+                        .offset(x: geo.size.width * clamped - 13)
+                }
             }
+            .frame(maxHeight: .infinity)
         }
-        .frame(height: 8)
+        .frame(height: highlighted ? 14 : 8)
+        .animation(.easeOut(duration: 0.15), value: highlighted)
     }
 }
 
