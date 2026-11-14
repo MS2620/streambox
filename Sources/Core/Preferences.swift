@@ -200,17 +200,22 @@ struct Preferences: Codable, Equatable {
     private static let key = "preferences.v1"
 
     static func load() -> Preferences {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let data = UserDefaults.standard.data(forKey: key) else { return Preferences() }
+        return decode(data) ?? Preferences()
+    }
+
+    /// Saved preferences (or a backup's), with defaults for keys they don't have.
+    static func decode(_ data: Data) -> Preferences? {
+        guard let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let defaultsData = try? JSONEncoder().encode(Preferences()),
               let defaults = try? JSONSerialization.jsonObject(with: defaultsData) as? [String: Any] else {
-            return Preferences()
+            return nil
         }
         // Saved values win; keys added in newer versions keep their defaults.
         let merged = defaults.merging(saved) { _, saved in saved }
         guard let mergedData = try? JSONSerialization.data(withJSONObject: merged),
               let prefs = try? JSONDecoder().decode(Preferences.self, from: mergedData) else {
-            return Preferences()
+            return nil
         }
         return prefs
     }

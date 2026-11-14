@@ -31,6 +31,11 @@ struct SettingsView: View {
                                     value: settings.prefs.parentalControlsOn ? "On" : "Off") { ParentalControlsView() }
                 }
 
+                GlassPanel("Backup") {
+                    SettingsLinkRow("Backup & restore", icon: "externaldrive",
+                                    value: BackupService.shared.isConfigured ? "Ready" : "Set up") { BackupView() }
+                }
+
                 GlassPanel("About") {
                     SettingsInfoRow("Version", icon: "info.circle", value: Self.version)
                     Button {
