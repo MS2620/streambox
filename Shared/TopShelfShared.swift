@@ -35,8 +35,33 @@ struct TopShelfSnapshot: Codable {
 /// If the group isn't available (some sideloading setups), the extension sees nothing
 /// and the Top Shelf shows the app's banner image as before.
 enum TopShelfStore {
-    static let appGroup = "group.com.mauro.streambox"
+    /// The name the project asks for. Sideloading tools re-sign with their own team and often
+    /// rename the group (e.g. adding the team ID), so the real one is read from the bundle.
+    static let requestedGroup = "group.com.mauro.streambox"
+    static let appGroup: String = provisionedGroups()?.first { $0.lowercased().contains("streambox") }
+        ?? provisionedGroups()?.first
+        ?? requestedGroup
     private static let key = "topShelfSnapshot"
+
+    /// The shared container exists, so the Top Shelf can read what the app writes.
+    static var isAvailable: Bool {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) != nil
+    }
+
+    /// App Groups granted by the provisioning profile the app (or extension) was signed with.
+    static func provisionedGroups() -> [String]? {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              // The profile is CMS-signed; the plist inside is plain XML.
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+              let plist = try? PropertyListSerialization.propertyList(
+                  from: data.subdata(in: start.lowerBound..<end.upperBound), format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any],
+              let groups = entitlements["com.apple.security.application-groups"] as? [String],
+              !groups.isEmpty else { return nil }
+        return groups
+    }
 
     static func write(_ snapshot: TopShelfSnapshot) {
         guard let defaults = UserDefaults(suiteName: appGroup),
