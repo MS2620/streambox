@@ -42,6 +42,8 @@ struct PlayerView: View {
     var body: some View {
         if let engine = player.engine {
             AetherPlaybackView(engine: engine, request: request)
+                .onAppear { player.isPresentingPlayer = true }
+                .onDisappear { player.isPresentingPlayer = false }
         } else {
             ZStack {
                 Color.black.ignoresSafeArea()

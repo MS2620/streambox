@@ -7,6 +7,9 @@ import AetherEngine
 final class PlayerEngineHolder: ObservableObject {
     let engine: AetherEngine?
     let initError: String?
+    /// True while the full-screen player is open. The Live TV guide's small
+    /// preview steps aside then, so the engine's picture goes to the full screen.
+    @Published var isPresentingPlayer = false
 
     init() {
         do {

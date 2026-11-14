@@ -21,6 +21,9 @@ private struct GuideSegment: Identifiable {
 /// with the Guide / List buttons here or in Settings → Live TV & Guide.
 struct LiveTVView: View {
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject private var player: PlayerEngineHolder
+    /// False while another tab is showing; the preview only plays on screen.
+    @State private var onScreen = false
 
     @State private var categories: [XtreamCategory] = []
     @State private var selectedID: String?
@@ -149,6 +152,8 @@ struct LiveTVView: View {
                 if floor > windowStart { windowStart = floor }
             }
         }
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
         .onChange(of: focusedCell) { _, id in
             focusChanged(id)
         }
@@ -330,7 +335,8 @@ struct LiveTVView: View {
         let entry = infoEntry ?? infoChannel.flatMap { current($0.id) }
         return HStack(alignment: .top, spacing: 30) {
             if prefs.guidePreview {
-                LivePreview(channel: infoChannel, active: playback == nil)
+                LivePreview(channel: infoChannel,
+                            active: playback == nil && onScreen && !player.isPresentingPlayer)
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text(infoChannel?.name ?? (groups.first { $0.id == selectedID }?.name ?? "Live TV"))
@@ -793,6 +799,10 @@ private struct LivePreview: View {
         }
         .onDisappear {
             if active { player.engine?.stop() }
+        }
+        .onChange(of: active) { _, isActive in
+            // Leaving the tab stops the preview; the full-screen player loads its own stream.
+            if !isActive && !player.isPresentingPlayer { player.engine?.stop() }
         }
     }
 }

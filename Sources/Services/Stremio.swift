@@ -28,15 +28,27 @@ struct StremioStream: Decodable, Hashable {
         (name ?? "Stream").replacingOccurrences(of: "\n", with: " · ")
     }
 
-    /// Vertical resolution guessed from the addon's labels (2160, 1080, 720, 480), or 0 if unknown.
+    /// Vertical resolution guessed from the addon's labels (2160, 1440, 1080, 720, 480), or 0 if unknown.
+    /// The addon's name is checked first, as that is where most addons put the quality.
     var resolution: Int {
-        let text = [name, title, description].compactMap { $0 }.joined(separator: " ").lowercased()
-        if text.contains("2160p") || text.contains("4k") || text.contains("uhd") { return 2160 }
-        if text.contains("1440p") { return 1440 }
-        if text.contains("1080p") { return 1080 }
-        if text.contains("720p") { return 720 }
-        if text.contains("576p") || text.contains("480p") || text.contains("sd ") { return 480 }
+        for text in [name, [title, description].compactMap { $0 }.joined(separator: " ")] {
+            if let text, let found = Self.resolution(in: text) { return found }
+        }
         return 0
+    }
+
+    /// Looks for whole words such as "4K", "UHD", "FHD", "1080p" or "HD". Addons
+    /// often style labels with look-alike letters (𝗙𝗛𝗗); those are mapped back first.
+    private static func resolution(in text: String) -> Int? {
+        let plain = text.precomposedStringWithCompatibilityMapping.lowercased()
+        let words = Set(plain.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        func has(_ any: String...) -> Bool { any.contains { words.contains($0) } }
+        if has("2160p", "2160", "4k", "uhd", "2160i") { return 2160 }
+        if has("1440p", "1440", "2k", "qhd") { return 1440 }
+        if has("1080p", "1080", "1080i", "fhd") { return 1080 }
+        if has("720p", "720", "hd") { return 720 }
+        if has("576p", "576", "480p", "480", "sd") { return 480 }
+        return nil
     }
 
     var detail: String {
