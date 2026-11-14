@@ -15,8 +15,20 @@ struct TopShelfItem: Codable, Hashable {
 struct TopShelfSnapshot: Codable {
     var live: [TopShelfItem] = []
     var continueWatching: [TopShelfItem] = []
+    /// Followed teams' matches and races today and tomorrow.
+    var upcoming: [TopShelfItem] = []
 
-    var isEmpty: Bool { live.isEmpty && continueWatching.isEmpty }
+    var isEmpty: Bool { live.isEmpty && continueWatching.isEmpty && upcoming.isEmpty }
+
+    init() {}
+
+    /// Rows missing from an older snapshot read as empty.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        live = (try? c.decode([TopShelfItem].self, forKey: .live)) ?? []
+        continueWatching = (try? c.decode([TopShelfItem].self, forKey: .continueWatching)) ?? []
+        upcoming = (try? c.decode([TopShelfItem].self, forKey: .upcoming)) ?? []
+    }
 }
 
 /// Shared between StreamBox and its Top Shelf extension through an App Group.

@@ -29,8 +29,23 @@ enum TopShelfPublisher {
                                     progress: entry.fraction)
             }
 
+        let liveIDs = Set(LiveScores.shared.liveFixtures.map(\.id))
+        snapshot.upcoming = LiveScores.shared.upcomingFixtures
+            .filter { !liveIDs.contains($0.id) }
+            .prefix(6)
+            .map { fixture in
+                let time = fixture.guideTime
+                // A race weekend names the session: "Qualifying · Tomorrow 04:00".
+                let session = fixture.sessions.first { $0.date == time }?.name
+                let when = [session, "\(DayFormat.label(time)) \(DayFormat.time(time))"].compactMap { $0 }.joined(separator: " · ")
+                return TopShelfItem(id: "upcoming-\(fixture.id)", title: "\(fixture.title) · \(when)",
+                                    imageURL: fixture.home?.logo,
+                                    link: "streambox://match?id=\(encode(fixture.id))")
+            }
+
         // Only bother tvOS when something actually changed.
-        guard snapshot.live != lastPublished?.live || snapshot.continueWatching != lastPublished?.continueWatching else { return }
+        guard snapshot.live != lastPublished?.live || snapshot.continueWatching != lastPublished?.continueWatching
+                || snapshot.upcoming != lastPublished?.upcoming else { return }
         lastPublished = snapshot
         TopShelfStore.write(snapshot)
         TVTopShelfContentProvider.topShelfContentDidChange()
