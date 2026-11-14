@@ -97,6 +97,8 @@ struct SportsView: View {
                                 }
                             }
                         }
+
+                        LeagueTablesSection(teams: teams)
                     }
                 }
                 .padding(.bottom, 60)
@@ -1216,5 +1218,162 @@ private struct F1TeamsView: View {
                 teamID: constructor.id, name: constructor.name, logo: nil
             ))
         }
+    }
+}
+
+
+// MARK: - Tables
+
+/// League tables for the user's teams, one tab per league, plus F1 championships.
+struct LeagueTablesSection: View {
+    let teams: [FavouriteTeam]
+    @State private var tabs: [StandingTab] = []
+    @State private var selectedID: String?
+    @State private var loading = true
+
+    private var selected: StandingTab? { tabs.first { $0.id == selectedID } ?? tabs.first }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Tables")
+                .font(.title3).bold()
+                .padding(.horizontal, 90)
+
+            if tabs.isEmpty {
+                Text(loading ? "Loading tables…" : "No tables for your teams' leagues.")
+                    .font(.system(size: 22))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .padding(.horizontal, 90)
+            } else {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 16) {
+                        ForEach(tabs) { tab in
+                            Button {
+                                selectedID = tab.id
+                            } label: {
+                                PillLabel(title: tab.title, selected: tab.id == (selected?.id))
+                            }
+                            .buttonStyle(PlainPressStyle())
+                        }
+                    }
+                    .padding(.horizontal, 90)
+                    .padding(.vertical, 16)
+                }
+                .scrollClipDisabled()
+                .focusSection()
+
+                if let selected {
+                    VStack(alignment: .leading, spacing: 30) {
+                        ForEach(selected.tables) { table in
+                            StandingTableView(table: table, showsTitle: selected.tables.count > 1)
+                        }
+                    }
+                    .padding(.horizontal, 90)
+                    .focusSection()
+                }
+            }
+        }
+        .padding(.top, 10)
+        .task(id: teams.map(\.id)) {
+            loading = true
+            tabs = await StandingsClient().tabs(for: teams)
+            loading = false
+        }
+    }
+}
+
+private struct StandingTableView: View {
+    let table: StandingTable
+    let showsTitle: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if showsTitle {
+                Text(table.title.uppercased())
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 4)
+            }
+            header
+            ForEach(table.rows) { row in
+                // Rows take focus so the remote can scroll through the whole table.
+                Button {} label: {
+                    StandingRowLabel(row: row, football: table.showsPlayedAndDifference)
+                }
+                .buttonStyle(RowFocusStyle())
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: 1200, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 30, style: .continuous).fill(Theme.glass))
+    }
+
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("#").frame(width: 60, alignment: .leading)
+            Text(table.showsPlayedAndDifference ? "TEAM" : "NAME").frame(maxWidth: .infinity, alignment: .leading)
+            if table.showsPlayedAndDifference {
+                Text("P").frame(width: 90, alignment: .trailing)
+                Text("GD").frame(width: 100, alignment: .trailing)
+            } else {
+                Text("WINS").frame(width: 120, alignment: .trailing)
+            }
+            Text("PTS").frame(width: 100, alignment: .trailing)
+        }
+        .font(.system(size: 18, weight: .bold))
+        .foregroundStyle(.white.opacity(0.55))
+        .padding(.horizontal, 20)
+        .padding(.vertical, 6)
+    }
+}
+
+private struct StandingRowLabel: View {
+    let row: StandingRow
+    let football: Bool
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text("\(row.rank)").frame(width: 60, alignment: .leading)
+            HStack(spacing: 14) {
+                if let logo = row.logo, let url = URL(string: logo) {
+                    AsyncImage(url: url) { image in
+                        image.resizable().scaledToFit()
+                    } placeholder: {
+                        Color.clear
+                    }
+                    .frame(width: 34, height: 34)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.name).lineLimit(1)
+                    if let detail = row.detail {
+                        Text(detail).font(.system(size: 17)).opacity(0.65).lineLimit(1)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if football {
+                Text(row.played ?? "—").opacity(0.75).frame(width: 90, alignment: .trailing)
+                Text(row.difference ?? "—").opacity(0.75).frame(width: 100, alignment: .trailing)
+            } else {
+                Text((row.played ?? "—").replacingOccurrences(of: " wins", with: ""))
+                    .opacity(0.75).frame(width: 120, alignment: .trailing)
+            }
+            Text(row.points).frame(width: 100, alignment: .trailing)
+        }
+        .font(.system(size: 23, weight: row.isFollowed ? .heavy : .semibold))
+        .foregroundStyle(isFocused ? Theme.ink : Color.white)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(isFocused ? Color.white : (row.isFollowed ? Color.white.opacity(0.22) : Color.clear)))
+    }
+}
+
+/// Focus shows on the row itself (white), without the system lift.
+private struct RowFocusStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
     }
 }
