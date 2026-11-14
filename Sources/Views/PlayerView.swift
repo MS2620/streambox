@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AVFoundation
+import MediaPlayer
 import AetherEngine
 
 /// The channel list a live stream was started from, so the player can zap.
@@ -737,6 +738,24 @@ private struct AetherPlaybackView: View {
         WatchHistory.shared.record(watch, position: clock.currentTime, duration: engine.duration)
     }
 
+    /// Tells the Apple TV what's playing, so Home Assistant, the Control Centre and the
+    /// iPhone remote see StreamBox as playing video (with title, pause and play).
+    private func publishNowPlaying() {
+        engine.ownsVideoNowPlayingSession = true
+        engine.ownsVideoNowPlayingCommands = true
+        engine.ownsSoftwareNowPlaying = true
+        engine.ownsAudioNowPlaying = true
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: current.title ?? "StreamBox",
+            MPNowPlayingInfoPropertyMediaType: NSNumber(value: MPNowPlayingInfoMediaType.video.rawValue),
+            MPNowPlayingInfoPropertyIsLiveStream: NSNumber(value: current.isLive),
+        ]
+        if let line = current.subtitle ?? current.sourceName, !line.isEmpty {
+            info[MPMediaItemPropertyArtist] = line
+        }
+        engine.setNowPlayingInfo(info)
+    }
+
     private func load(start: Double? = nil) async {
         loadError = nil
         let prefs = settings.prefs
@@ -784,6 +803,7 @@ private struct AetherPlaybackView: View {
         do {
             // The Live TV guide preview plays muted on the same engine.
             engine.volume = 1
+            publishNowPlaying()
             _ = try await engine.load(url: current.url, startPosition: start, options: options)
             engine.videoGravity = fillScreen ? .resizeAspectFill : .resizeAspect
         } catch is CancellationError {
