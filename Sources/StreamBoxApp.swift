@@ -74,6 +74,7 @@ struct RootView: View {
             .task { await TopShelfPublisher.start(settings) }
             // My List changes go straight to the shelf.
             .onChange(of: settings.prefs.myList) { _, _ in TopShelfPublisher.publish() }
+            .onChange(of: settings.prefs.topShelfExtra) { _, _ in TopShelfPublisher.publish() }
             .overlay {
                 if !player.isPresentingPlayer { UpdateCard() }
             }

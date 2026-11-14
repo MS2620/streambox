@@ -854,6 +854,13 @@ struct HomeScreenSettingsView: View {
             }
             SettingsNote("Select a row to show or hide it, or to move it up or down. My List, Favourite Channels and My Teams only appear once they have something in them.")
 
+            GlassPanel("Apple TV Top Shelf") {
+                SettingsOptionRow("Top Shelf also shows", icon: "rectangle.topthird.inset.filled",
+                                  selection: $settings.prefs.topShelfExtra,
+                                  options: TopShelfExtra.allCases.map { ($0, $0.label) })
+            }
+            SettingsNote("Live games and Continue Watching are always on the Top Shelf. Coming up is your teams' games and races today and tomorrow. When there's nothing to show, it shows what's trending.")
+
             GlassPanel {
                 SettingsActionRow("Reset to default", icon: "arrow.counterclockwise") {
                     settings.prefs.homeRows = HomeRow.allCases.map(\.rawValue)
