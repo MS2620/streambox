@@ -68,10 +68,20 @@ jobs:
           xcrun --sdk appletvos assetutil --info "$APP/Assets.car" | grep -E '"(Name|AssetType|Idiom)"' | sort | uniq -c | head -60 || echo "No Assets.car"
 
       # Unsigned IPA for sideloading (Sideloadly / atvloadly re-sign it with your Apple ID)
-      - name: Package unsigned IPA
+      # Pseudo-sign (ldid) the app and its Top Shelf extension with their entitlements.
+      # It's not a real signature, but it tells atvloadly/Impactor which App Group
+      # to register when it re-signs; without it the Top Shelf can't share data.
+      - name: Package IPA with entitlements
         run: |
+          brew install ldid
           rm -rf Payload && mkdir -p Payload
           cp -R build/Build/Products/Release-appletvos/StreamBox.app Payload/
+          APP=Payload/StreamBox.app
+          ldid -SConfig/StreamBoxTopShelf.entitlements "$APP/PlugIns/StreamBoxTopShelf.appex/StreamBoxTopShelf"
+          ldid -SConfig/StreamBox.entitlements "$APP/StreamBox"
+          echo "--- Entitlements now in the app ---"
+          ldid -e "$APP/StreamBox"
+          ldid -e "$APP/PlugIns/StreamBoxTopShelf.appex/StreamBoxTopShelf"
           zip -qry StreamBox-unsigned.ipa Payload
 
       - uses: actions/upload-artifact@v4
