@@ -20,6 +20,8 @@ jobs:
   # Free: compiles the app (unsigned) on every push so you know the code builds.
   build:
     runs-on: xcode-27  # AetherEngine needs Xcode 27
+    permissions:
+      contents: write   # to publish the pre-release below
     steps:
       - uses: actions/checkout@v4
 
@@ -76,6 +78,23 @@ jobs:
         with:
           name: StreamBox-unsigned-ipa
           path: StreamBox-unsigned.ipa
+
+      # Every build of main becomes a GitHub pre-release with the IPA attached,
+      # so the latest one is always on the Releases page (and its download link).
+      - name: Publish pre-release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          TITLE="StreamBox build ${{ github.run_number }}"
+          git log -1 --format='%B' | grep -v -e '^Co-Authored-By:' -e '^Claude-Session:' > notes.md
+          cp StreamBox-unsigned.ipa StreamBox.ipa
+          gh release create "$TAG" StreamBox.ipa \
+            --target "${{ github.sha }}" \
+            --title "$TITLE" \
+            --notes-file notes.md \
+            --prerelease
 
   # Needs a paid Apple Developer account. Enable by setting the repository
   # variable ENABLE_TESTFLIGHT=true and adding the secrets listed in README.md.
