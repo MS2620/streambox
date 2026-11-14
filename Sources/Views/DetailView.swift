@@ -4,6 +4,8 @@ struct StreamTarget: Identifiable {
     let type: String   // "movie" or "series"
     let id: String     // Stremio id, e.g. "tt0903747:1:1"
     let title: String
+    var subtitle: String? = nil
+    var overview: String? = nil
 }
 
 struct DetailView: View {
@@ -49,7 +51,8 @@ struct DetailView: View {
                     if item.kind == .movie {
                         Button {
                             if let imdbID {
-                                streamTarget = StreamTarget(type: "movie", id: imdbID, title: item.displayTitle)
+                                streamTarget = StreamTarget(type: "movie", id: imdbID, title: item.displayTitle,
+                                                           subtitle: item.year, overview: item.overview)
                             }
                         } label: {
                             Label("Find Streams", systemImage: "play.fill")
@@ -90,7 +93,9 @@ struct DetailView: View {
                         streamTarget = StreamTarget(
                             type: "series",
                             id: "\(imdbID):\(episode.seasonNumber):\(episode.episodeNumber)",
-                            title: "\(item.displayTitle) S\(episode.seasonNumber)E\(episode.episodeNumber)"
+                            title: item.displayTitle,
+                            subtitle: "S\(episode.seasonNumber)E\(episode.episodeNumber) · \(episode.name ?? "Episode \(episode.episodeNumber)")",
+                            overview: episode.overview
                         )
                     }
                 } label: {
@@ -232,7 +237,8 @@ struct StreamListView: View {
         do {
             let url = try await StreamResolver(realDebridKey: settings.realDebridKey).resolve(result.stream)
             status = nil
-            playback = PlaybackRequest(url: url, title: target.title)
+            playback = PlaybackRequest(url: url, title: target.title, subtitle: target.subtitle,
+                                       overview: target.overview, sourceName: result.addonName)
         } catch {
             status = error.localizedDescription
         }

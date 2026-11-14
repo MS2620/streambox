@@ -149,8 +149,17 @@ struct LiveTVView: View {
 
     private func play(_ channel: XtreamChannel) {
         guard let url = client.liveURL(for: channel, format: prefs.liveFormat) else { return }
-        playback = PlaybackRequest(url: url, title: channel.name, isLive: true,
-                                   httpHeaders: client.requestHeaders)
+        let list = sortedChannels
+        let index = list.firstIndex(of: channel) ?? 0
+        playback = PlaybackRequest(
+            url: url,
+            title: channel.name,
+            artworkURL: channel.icon.flatMap { URL(string: $0) },
+            sourceName: visibleCategories.first(where: { $0.id == selectedID })?.name,
+            isLive: true,
+            httpHeaders: client.requestHeaders,
+            live: LiveContext(channels: list, index: index)
+        )
     }
 
     private func loadCategories() async {

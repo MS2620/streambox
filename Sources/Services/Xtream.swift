@@ -44,22 +44,28 @@ struct XtreamChannel: Decodable, Identifiable, Hashable {
 
 struct XtreamEPGEntry: Decodable, Hashable {
     let title: String
+    let description: String
     let start: Date?
     let end: Date?
 
     private enum CodingKeys: String, CodingKey {
         case title
+        case description
         case startTimestamp = "start_timestamp"
         case stopTimestamp = "stop_timestamp"
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let raw = (try? c.decode(String.self, forKey: .title)) ?? ""
-        // Xtream returns EPG titles base64-encoded.
-        title = Data(base64Encoded: raw).map { String(decoding: $0, as: UTF8.self) } ?? raw
+        // Xtream returns EPG text base64-encoded.
+        title = Self.decodeBase64((try? c.decode(String.self, forKey: .title)) ?? "")
+        description = Self.decodeBase64((try? c.decode(String.self, forKey: .description)) ?? "")
         start = c.flexInt(.startTimestamp).map { Date(timeIntervalSince1970: TimeInterval($0)) }
         end = c.flexInt(.stopTimestamp).map { Date(timeIntervalSince1970: TimeInterval($0)) }
+    }
+
+    private static func decodeBase64(_ raw: String) -> String {
+        Data(base64Encoded: raw).map { String(decoding: $0, as: UTF8.self) } ?? raw
     }
 }
 
