@@ -31,18 +31,20 @@ struct StremioStream: Decodable, Hashable {
     /// Vertical resolution guessed from the addon's labels (2160, 1440, 1080, 720, 480), or 0 if unknown.
     /// The addon's name is checked first, as that is where most addons put the quality.
     var resolution: Int {
-        for text in [name, [title, description].compactMap { $0 }.joined(separator: " ")] {
-            if let text, let found = Self.resolution(in: text) { return found }
+        let details = [title, description].compactMap { $0 }.joined(separator: " ")
+        let sources: [String] = [name ?? "", details]
+        for text in sources {
+            if let found = Self.detectResolution(in: text) { return found }
         }
         return 0
     }
 
     /// Looks for whole words such as "4K", "UHD", "FHD", "1080p" or "HD". Addons
     /// often style labels with look-alike letters (𝗙𝗛𝗗); those are mapped back first.
-    private static func resolution(in text: String) -> Int? {
+    private static func detectResolution(in text: String) -> Int? {
         let plain = text.precomposedStringWithCompatibilityMapping.lowercased()
-        let words = Set(plain.split { !$0.isLetter && !$0.isNumber }.map(String.init))
-        func has(_ any: String...) -> Bool { any.contains { words.contains($0) } }
+        let words = Set(plain.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+        func has(_ labels: String...) -> Bool { labels.contains { words.contains($0) } }
         if has("2160p", "2160", "4k", "uhd", "2160i") { return 2160 }
         if has("1440p", "1440", "2k", "qhd") { return 1440 }
         if has("1080p", "1080", "1080i", "fhd") { return 1080 }
