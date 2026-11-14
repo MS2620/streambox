@@ -246,9 +246,13 @@ private struct AetherPlaybackView: View {
             hideTask?.cancel()
             toastTask?.cancel()
             saveProgress()
+            scrobble("stop")
             engine.stop()
         }
-        .onChange(of: engine.state) { _, state in
+        .onChange(of: engine.state) { old, state in
+            // Trakt's "Watching now": paused and resumed as the player is.
+            if state == .paused { scrobble("pause") }
+            if state == .playing && (old == .paused || old == .loading || old == .idle) { scrobble("start") }
             if state == .ended {
                 if let watch = current.watch { WatchHistory.shared.setWatched(true, context: watch) }
                 dismiss()
@@ -704,6 +708,12 @@ private struct AetherPlaybackView: View {
             guard !Task.isCancelled else { return }
             saveProgress()
         }
+    }
+
+    /// Tells Trakt about a movie or episode (Settings › Connections › Trakt › Scrobble).
+    private func scrobble(_ action: String) {
+        guard let watch = current.watch, !current.isLive, loadRequest != nil, engine.duration > 0 else { return }
+        TraktSync.shared.scrobble(action, context: watch, progress: clock.currentTime / engine.duration * 100)
     }
 
     private func saveProgress() {

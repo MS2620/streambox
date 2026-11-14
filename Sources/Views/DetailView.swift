@@ -356,8 +356,10 @@ struct DetailView: View {
     private func toggleMyList() {
         if inMyList {
             settings.prefs.myList.removeAll { $0.uid == item.uid }
+            TraktSync.shared.watchlistChanged(item, added: false)
         } else {
             settings.prefs.myList.append(item)
+            TraktSync.shared.watchlistChanged(item, added: true)
         }
     }
 

@@ -204,6 +204,7 @@ struct ConnectionsView: View {
     @State private var addonStates: [String: ConnectionState] = [:]
     @State private var versions: [String: String] = [:]
     @State private var confirmingDelete = false
+    @ObservedObject private var trakt = TraktSync.shared
 
     private var languageName: String {
         LanguageOptions.tmdb.first { $0.code == settings.prefs.tmdbLanguage }?.name ?? settings.prefs.tmdbLanguage
@@ -232,6 +233,17 @@ struct ConnectionsView: View {
                 } label: {
                     ConnectionRowLabel(title: "TMDB", icon: "film", state: tmdb,
                                        trailing: settings.tmdbToken.isEmpty ? "Set up" : languageName)
+                }
+                .buttonStyle(PlainPressStyle())
+
+                NavigationLink {
+                    TraktAccountView()
+                } label: {
+                    ConnectionRowLabel(title: "Trakt", icon: "checkmark.seal",
+                                       state: trakt.isSignedIn
+                                           ? .good("Sync · " + (trakt.username ?? "signed in"))
+                                           : .off("Sync · Not connected"),
+                                       trailing: trakt.isSignedIn ? nil : "Set up")
                 }
                 .buttonStyle(PlainPressStyle())
             }
@@ -720,4 +732,208 @@ struct AddAddonView: View {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+// MARK: - Trakt
+
+struct TraktAccountView: View {
+    @EnvironmentObject var settings: AppSettings
+    @ObservedObject private var trakt = TraktSync.shared
+
+    @State private var editingID = false
+    @State private var editingSecret = false
+    @State private var code: TraktDeviceCode?
+    @State private var codeStarted = Date()
+    @State private var signInMessage: String?
+    @State private var confirmingSignOut = false
+
+    private var state: ConnectionState {
+        if let error = trakt.lastError { return .problem(error) }
+        if trakt.isSignedIn { return .good("Signed in" + (trakt.username.map { " as \($0)" } ?? "")) }
+        if code != nil { return .checking("Waiting for you to approve…") }
+        return .off(trakt.hasApp ? "Not signed in" : "Add your Trakt app first")
+    }
+
+    var body: some View {
+        ZStack {
+            AppBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 30) {
+                    ConnectionHeader(title: "Trakt", icon: "checkmark.seal", state: state)
+
+                    if let code, !trakt.isSignedIn {
+                        codePanel(code)
+                    }
+
+                    if trakt.isSignedIn {
+                        accountPanel
+                        syncPanel
+                    } else if code == nil {
+                        GlassPanel {
+                            Button {
+                                Task { await startSignIn() }
+                            } label: {
+                                ListRowLabel(title: "Sign in to Trakt", icon: "person.crop.circle.badge.plus")
+                            }
+                            .buttonStyle(PlainPressStyle())
+                            .disabled(!trakt.hasApp)
+                        }
+                        if let signInMessage { SettingsNote(signInMessage) }
+                    }
+
+                    GlassPanel("Your Trakt app") {
+                        Button {
+                            editingID = true
+                        } label: {
+                            ListRowLabel(title: "Client ID", icon: "key",
+                                         trailing: trakt.clientID.isEmpty ? "Not set" : "••••" + String(trakt.clientID.suffix(4)))
+                        }
+                        .buttonStyle(PlainPressStyle())
+                        Button {
+                            editingSecret = true
+                        } label: {
+                            ListRowLabel(title: "Client secret", icon: "lock",
+                                         trailing: trakt.clientSecret.isEmpty ? "Not set" : "••••••")
+                        }
+                        .buttonStyle(PlainPressStyle())
+                    }
+                    SettingsNote("Free: on trakt.tv go to Settings › Your API Apps › New Application, give it any name and use urn:ietf:wg:oauth:2.0:oob as the redirect URI. Copy its Client ID and Client Secret here.")
+                }
+                .frame(maxWidth: 1100)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
+            }
+        }
+        .sheet(isPresented: $editingID) {
+            NameSheet(title: "Trakt Client ID", initial: trakt.clientID, placeholder: "Client ID",
+                      autocapitalize: false) { trakt.clientID = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        .sheet(isPresented: $editingSecret) {
+            NameSheet(title: "Trakt Client Secret", initial: trakt.clientSecret, placeholder: "Client secret",
+                      secure: true, autocapitalize: false) {
+                trakt.clientSecret = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        .confirmationDialog("Sign out of Trakt?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) { trakt.signOut() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Progress and ticks already on this Apple TV stay. Nothing is deleted on Trakt.")
+        }
+        .task(id: code?.deviceCode) { await pollLoop() }
+    }
+
+    private func codePanel(_ code: TraktDeviceCode) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("On your phone or computer, go to")
+                .font(.system(size: 28, weight: .bold))
+            Text(code.verificationUrl.replacingOccurrences(of: "https://", with: ""))
+                .font(.system(size: 44, weight: .heavy))
+                .foregroundStyle(Color(red: 0.93, green: 0.11, blue: 0.14))
+            Text("and enter this code")
+                .font(.system(size: 26, weight: .semibold))
+            HStack(spacing: 12) {
+                ForEach(Array(code.userCode.enumerated()), id: \.offset) { _, character in
+                    Text(String(character))
+                        .font(.system(size: 48, weight: .heavy))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: 72, height: 92)
+                        .background(RoundedRectangle(cornerRadius: 16).fill(Color.white))
+                }
+            }
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let left = max(0, Int(codeStarted.addingTimeInterval(TimeInterval(code.expiresIn)).timeIntervalSince(context.date)))
+                Text("Waiting for you to approve… code expires in \(left / 60):\(String(format: "%02d", left % 60))")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            Button {
+                self.code = nil
+            } label: {
+                PillLabel(title: "Cancel", icon: "xmark")
+            }
+            .buttonStyle(PlainPressStyle())
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 34, style: .continuous).fill(Theme.glass))
+    }
+
+    private var accountPanel: some View {
+        GlassPanel("Trakt") {
+            Button {
+                confirmingSignOut = true
+            } label: {
+                ListRowLabel(title: "Signed in as \(trakt.username ?? "your account")", icon: "person.crop.circle",
+                             trailing: "Sign out")
+            }
+            .buttonStyle(PlainPressStyle())
+            Button {
+                Task { await trakt.sync() }
+            } label: {
+                ListRowLabel(title: trakt.syncing ? "Syncing…" : "Sync now", icon: "arrow.triangle.2.circlepath",
+                             trailing: trakt.lastSync.map { "Last synced " + $0.formatted(.relative(presentation: .named)) })
+            }
+            .buttonStyle(PlainPressStyle())
+            .disabled(trakt.syncing)
+        }
+    }
+
+    private var syncPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            GlassPanel("What to sync") {
+                SettingsToggleRow("Watch progress & Continue Watching", icon: "play.circle", isOn: $settings.prefs.traktProgress)
+                SettingsToggleRow("Watched history", icon: "checkmark.circle", isOn: $settings.prefs.traktHistory)
+                SettingsToggleRow("Watchlist ↔ My List", icon: "plus.circle", isOn: $settings.prefs.traktWatchlist)
+                SettingsToggleRow("Scrobble while watching", icon: "dot.radiowaves.left.and.right", isOn: $settings.prefs.traktScrobble)
+            }
+            SettingsNote("Syncs when StreamBox opens and every 10 minutes. Scrobbling shows \u{201C}Watching now\u{201D} on your Trakt profile and marks things watched at 80%.")
+        }
+    }
+
+    private func startSignIn() async {
+        signInMessage = nil
+        do {
+            let fresh = try await trakt.startSignIn()
+            codeStarted = Date()
+            code = fresh
+        } catch {
+            signInMessage = "Couldn't start sign-in: \(error.localizedDescription). Check the client ID."
+        }
+    }
+
+    private func pollLoop() async {
+        guard let code else { return }
+        var interval = max(code.interval, 5)
+        let deadline = codeStarted.addingTimeInterval(TimeInterval(code.expiresIn))
+        while !Task.isCancelled, Date() < deadline {
+            try? await Task.sleep(for: .seconds(interval))
+            guard !Task.isCancelled else { return }
+            switch await trakt.poll(code) {
+            case .approved:
+                self.code = nil
+                return
+            case .pending:
+                continue
+            case .slowDown:
+                interval += 5
+            case .expired:
+                self.code = nil
+                signInMessage = "The code expired. Sign in again."
+                return
+            case .denied:
+                self.code = nil
+                signInMessage = "Sign-in was declined on Trakt."
+                return
+            case .failed(let message):
+                self.code = nil
+                signInMessage = message
+                return
+            }
+        }
+        if !Task.isCancelled, self.code != nil {
+            self.code = nil
+            signInMessage = "The code expired. Sign in again."
+        }
+    }
 }
