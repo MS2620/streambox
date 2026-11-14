@@ -34,6 +34,17 @@ struct XtreamChannel: Decodable, Identifiable, Hashable {
         case epgChannelID = "epg_channel_id"
     }
 
+    /// A channel known only by its basics, e.g. from a saved reminder.
+    init(id: Int, number: Int? = nil, name: String, icon: String? = nil,
+         categoryID: String? = nil, epgChannelID: String? = nil) {
+        self.id = id
+        self.number = number
+        self.name = name
+        self.icon = icon
+        self.categoryID = categoryID
+        self.epgChannelID = epgChannelID
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = c.flexInt(.streamID) ?? -1

@@ -238,6 +238,9 @@ struct LiveTVSettingsView: View {
 
     var body: some View {
         SettingsPage("Live TV & Guide") {
+            RemindersPanel()
+            SettingsNote("Select a programme that hasn't started in the guide to be reminded when it begins. Reminders appear while StreamBox is open, including over the player; tvOS doesn't let apps notify you when they're closed.")
+
             GlassPanel("Layout") {
                 SettingsOptionRow("Default view", icon: "square.grid.2x2", selection: $settings.prefs.liveLayout,
                                   options: LiveLayout.allCases.map { ($0, $0.label) })

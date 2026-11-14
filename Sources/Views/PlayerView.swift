@@ -216,6 +216,10 @@ private struct AetherPlaybackView: View {
                 panelView(panel).transition(.move(edge: .trailing))
             }
 
+            ReminderBanner { reminder in
+                watchReminder(reminder)
+            }
+
             if let toast {
                 VStack {
                     Text(toast)
@@ -889,6 +893,16 @@ private struct AetherPlaybackView: View {
         let target = max(0, clock.currentTime + seconds)
         Task { await engine.seek(to: target) }
         showInfo()
+    }
+
+    /// "Watch now" on a reminder: the channel in the current list if it's there, otherwise on its own.
+    private func watchReminder(_ reminder: ProgrammeReminder) {
+        if let live = current.live, let index = live.channels.firstIndex(where: { $0.id == reminder.channelID }) {
+            zap(to: index)
+        } else if let request = PlaybackRequest.liveChannel(reminder.channel, settings: settings) {
+            current = request
+            showInfo()
+        }
     }
 
     private func zap(by delta: Int) {
