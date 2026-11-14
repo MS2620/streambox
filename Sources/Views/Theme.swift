@@ -8,6 +8,13 @@ enum Theme {
     static let glassStrong = Color.white.opacity(0.2)
     static let ink = Color(red: 0.08, green: 0.08, blue: 0.1)
     static let live = Color(red: 1, green: 0.3, blue: 0.3)
+    /// Text of rows that delete something, on glass.
+    static let danger = Color(red: 1, green: 0.54, blue: 0.54)
+    /// The same rows while focused (white background).
+    static let dangerInk = Color(red: 0.75, green: 0.1, blue: 0.1)
+    /// Status dots.
+    static let good = Color(red: 0.29, green: 0.87, blue: 0.5)
+    static let warning = Color(red: 1, green: 0.75, blue: 0.3)
 }
 
 extension Color {
@@ -157,7 +164,14 @@ struct ListRowLabel: View {
     var trailingIcon: String? = nil
     var selected = false
     var dimmed = false
+    /// Red text, for rows that delete something.
+    var destructive = false
     @Environment(\.isFocused) private var isFocused
+
+    private var restingColor: Color {
+        if destructive { return Theme.danger }
+        return Color.white.opacity(dimmed ? 0.55 : 1)
+    }
 
     var body: some View {
         HStack(spacing: 18) {
@@ -196,7 +210,7 @@ struct ListRowLabel: View {
                 Image(systemName: trailingIcon).font(.system(size: 24, weight: .semibold))
             }
         }
-        .foregroundStyle(isFocused ? Theme.ink : Color.white.opacity(dimmed ? 0.55 : 1))
+        .foregroundStyle(isFocused ? (destructive ? Theme.dangerInk : Theme.ink) : restingColor)
         .padding(.horizontal, 18)
         .padding(.vertical, 13)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -224,32 +238,50 @@ struct ThinProgress: View {
     }
 }
 
-/// A sheet that asks for a short name (new folder, rename).
+/// A sheet that asks for one line of text: a folder name, a server, a password…
 struct NameSheet: View {
     let title: String
+    let placeholder: String
+    let secure: Bool
+    let allowsEmpty: Bool
+    let autocapitalize: Bool
     let onSave: (String) -> Void
     @State private var text: String
     @Environment(\.dismiss) private var dismiss
 
-    init(title: String, initial: String = "", onSave: @escaping (String) -> Void) {
+    init(title: String, initial: String = "", placeholder: String = "Name", secure: Bool = false,
+         allowsEmpty: Bool = false, autocapitalize: Bool = true, onSave: @escaping (String) -> Void) {
         self.title = title
+        self.placeholder = placeholder
+        self.secure = secure
+        self.allowsEmpty = allowsEmpty
+        self.autocapitalize = autocapitalize
         self.onSave = onSave
         self._text = State(initialValue: initial)
     }
 
-    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// Passwords are kept exactly as typed; everything else loses stray spaces.
+    private var value: String { secure ? text : text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         VStack(spacing: 40) {
             Text(title).font(.title2).bold()
-            TextField("Name", text: $text)
-                .frame(maxWidth: 900)
+            Group {
+                if secure {
+                    SecureField(placeholder, text: $text)
+                } else {
+                    TextField(placeholder, text: $text)
+                        .textInputAutocapitalization(autocapitalize ? .words : .never)
+                }
+            }
+            .autocorrectionDisabled(!autocapitalize)
+            .frame(maxWidth: 900)
             HStack(spacing: 40) {
                 Button("Save") {
-                    onSave(trimmed)
+                    onSave(value)
                     dismiss()
                 }
-                .disabled(trimmed.isEmpty)
+                .disabled(!allowsEmpty && value.isEmpty)
                 Button("Cancel", role: .cancel) { dismiss() }
             }
         }

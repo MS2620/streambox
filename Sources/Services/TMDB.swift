@@ -111,6 +111,13 @@ struct TMDBClient {
         return try JSONDecoder.snake.decode(T.self, from: data)
     }
 
+    /// True when the token is accepted.
+    func validate() async throws -> Bool {
+        struct Reply: Decodable { let success: Bool? }
+        let reply: Reply = try await get("authentication")
+        return reply.success ?? false
+    }
+
     func trending(_ type: MediaType) async throws -> [TMDBItem] {
         let page: TMDBPage<TMDBItem> = try await get("trending/\(type.rawValue)/week")
         return page.results.map { var item = $0; item.mediaType = type.rawValue; return item }

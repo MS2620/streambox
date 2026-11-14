@@ -3,7 +3,7 @@
 An Apple TV app that:
 
 - browses movies and shows (metadata from TMDB);
-- finds streams through **your own** Stremio-compatible addons and **your own** Real-Debrid account;
+- finds streams through **your own** Stremio-compatible addons (direct links only);
 - plays live TV from **your own** Xtream Codes IPTV login.
 
 The app ships with no content and no sources. Everything is supplied by the user in Settings and stored in the Keychain.
@@ -15,7 +15,7 @@ project.yml                  XcodeGen spec (the .xcodeproj is generated on CI)
 Sources/
   StreamBoxApp.swift         App entry + tab bar
   Core/                      Keychain, settings, helpers
-  Services/                  TMDB, Stremio addon, Real-Debrid, Xtream clients
+  Services/                  TMDB, Stremio addon, Xtream, sports and TV guide search
   Player/                    AetherEngine holder + subtitle overlay
   Views/                     Home/Search, Detail + stream picker, Live TV, Settings, Player
 .github/workflows/build.yml  CI: unsigned build (free) + optional TestFlight upload
@@ -67,11 +67,10 @@ app icon and top-shelf image assets. Add an `Assets.xcassets` with an
 
 ## First run on the TV
 
-Settings tab:
-- **TMDB token:** free at themoviedb.org → Settings → API (the long "API Read Access Token").
-- **Real-Debrid API key:** real-debrid.com/apitoken.
-- **Stremio addons:** paste the manifest URL of an addon configured with your debrid account.
-- **Xtream Codes:** server, username and password from your IPTV provider, then **Test login**.
+Settings → Connections:
+- **TMDB:** free at themoviedb.org → Settings → API (the long "API Read Access Token").
+- **IPTV:** server, username and password from your Xtream Codes provider, then **Test connection**.
+- **Stremio addons:** Add addon → the manifest URL from the addon's configuration page. Only results with a direct link play; torrent-only results are hidden.
 
 Tip: typing on the Apple TV is painful. Your iPhone shows a keyboard notification whenever a text field is focused.
 
@@ -79,9 +78,9 @@ Tip: typing on the Apple TV is painful. Your iPhone shows a keyboard notificatio
 
 1. ~~Shell, TMDB rails, detail pages~~
 2. ~~Xtream live TV + short EPG~~
-3. ~~Stremio addon streams + Real-Debrid resolve~~
+3. ~~Stremio addon streams~~ (Real-Debrid removed; addons must return direct links)
 4. ~~Player: AetherEngine for live TV, movies and series (MKV, HDR10/DV, Atmos passthrough, PGS/ASS subs, live retune)~~. Next: resume positions, track picker UI
 5. ~~Movies & Series tabs (TMDB rows + genres), Live TV favourites, hidden categories, sorting, timeshift, user agent, expanded settings~~. Next: Xtream VOD + series, full XMLTV EPG grid
 6. Continue watching / resume positions, Trakt sync
-7. More debrid providers (AllDebrid, Premiumize, TorBox), stream ranking and auto-pick
+7. Stream ranking and auto-pick
 8. Top shelf extension, profiles

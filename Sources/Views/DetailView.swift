@@ -385,9 +385,17 @@ struct StreamListView: View {
             }
         }
 
-        results = arrange(found)
+        // Only direct links can be played; torrent-only results are left out.
+        let playable = found.filter { $0.stream.playableURL != nil }
+        let skipped = found.count - playable.count
+        results = arrange(playable)
         loading = false
-        if !failures.isEmpty { status = "Failed to reach: " + failures.joined(separator: ", ") }
+        var notes: [String] = []
+        if !failures.isEmpty { notes.append("Failed to reach: " + failures.joined(separator: ", ")) }
+        if skipped > 0 {
+            notes.append("\(skipped) torrent-only result(s) hidden. Set your addon up to return direct links.")
+        }
+        if !notes.isEmpty { status = notes.joined(separator: "\n") }
 
         if settings.prefs.autoPlayFirstStream, let first = results.first {
             await play(first)
@@ -416,14 +424,8 @@ struct StreamListView: View {
     }
 
     private func play(_ result: FoundStream) async {
-        status = "Resolving…"
-        do {
-            let url = try await StreamResolver(realDebridKey: settings.realDebridKey).resolve(result.stream)
-            status = nil
-            playback = PlaybackRequest(url: url, title: target.title, subtitle: target.subtitle,
-                                       overview: target.overview, sourceName: result.addonName)
-        } catch {
-            status = error.localizedDescription
-        }
+        guard let url = result.stream.playableURL else { return }
+        playback = PlaybackRequest(url: url, title: target.title, subtitle: target.subtitle,
+                                   overview: target.overview, sourceName: result.addonName)
     }
 }

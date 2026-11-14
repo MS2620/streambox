@@ -65,6 +65,8 @@ struct Fixture: Identifiable, Hashable {
         let name: String
         let logo: String?
         var color: String? = nil
+        /// Other names for the team, e.g. ESPN's short name ("Man United").
+        var aliases: [String] = []
     }
 
     struct Session: Hashable {
@@ -444,7 +446,8 @@ struct ESPNClient {
             let followed = playing.first { $0.teamID == team.id }
             return Fixture.Side(id: team.id, name: team.displayName,
                                 logo: team.logoURL ?? followed?.logo,
-                                color: team.color ?? followed?.color)
+                                color: team.color ?? followed?.color,
+                                aliases: [team.shortDisplayName].compactMap { $0 })
         }
         let homeTeam = competitors.first { $0.homeAway == "home" }?.team ?? competitors.first?.team
         let awayTeam = competitors.first { $0.homeAway == "away" }?.team ?? competitors.last?.team
@@ -645,97 +648,5 @@ struct F1Client {
             keywords: keywords,
             followed: followed
         )
-    }
-}
-
-// MARK: - Finding the fixture in the TV guide
-
-struct ChannelMatch: Identifiable {
-    let channel: XtreamChannel
-    let programme: XtreamEPGEntry
-    let score: Int
-    var id: Int { channel.id }
-}
-
-enum ChannelFinder {
-    /// Category / channel name fragments that suggest a sports channel.
-    private static let sportWords = [
-        "sport", "f1", "formula", "football", "soccer", "rugby", "nfl", "nba", "nhl", "mlb",
-        "premier", "dazn", "tnt", "espn", "bein", "eleven", "viaplay", "arena", "golf",
-        "racing", "motor", "laliga", "serie a", "bundesliga", "ligue", "uefa", "ppv", "event",
-    ]
-
-    /// Searches the provider's guide for listings of this fixture at its time.
-    /// - Parameters:
-    ///   - hiddenCategories / hiddenChannels: groups and channels the user hid; never searched.
-    ///   - alwaysInclude: channels to search even if they don't look like sports channels
-    ///     (the user's favourites and folder channels).
-    static func matches(for fixture: Fixture, client: XtreamClient,
-                        hiddenCategories: Set<String> = [], hiddenChannels: Set<Int> = [],
-                        alwaysInclude: Set<Int> = []) async -> [ChannelMatch] {
-        let cache = XtreamCache.shared
-        guard let all = try? await cache.liveStreams(client) else { return [] }
-        let streams = all.filter { channel in
-            if hiddenChannels.contains(channel.id) { return false }
-            if let category = channel.categoryID, hiddenCategories.contains(category) { return false }
-            return true
-        }
-        let categories = (try? await cache.liveCategories(client)) ?? []
-
-        let sportCategories = Set(categories
-            .filter { category in sportWords.contains { category.name.lowercased().contains($0) } }
-            .map(\.id))
-        var candidates = streams.filter { channel in
-            if alwaysInclude.contains(channel.id) { return true }
-            if let category = channel.categoryID, sportCategories.contains(category) { return true }
-            let name = channel.name.lowercased()
-            return sportWords.contains { name.contains($0) }
-        }
-        // Keep the guide download bounded on very large playlists.
-        if candidates.count > 400 { candidates = Array(candidates.prefix(400)) }
-
-        let start = fixture.guideTime
-        let keywords = fixture.keywords
-        var results: [ChannelMatch] = []
-
-        await withTaskGroup(of: ChannelMatch?.self) { group in
-            var next = 0
-            let parallel = min(8, candidates.count)
-            while next < parallel {
-                let channel = candidates[next]
-                group.addTask { await match(channel, start: start, keywords: keywords, client: client) }
-                next += 1
-            }
-            while let result = await group.next() {
-                if let result { results.append(result) }
-                if next < candidates.count {
-                    let channel = candidates[next]
-                    group.addTask { await match(channel, start: start, keywords: keywords, client: client) }
-                    next += 1
-                }
-            }
-        }
-
-        return Array(results
-            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.channel.name < $1.channel.name }
-            .prefix(12))
-    }
-
-    private static func match(_ channel: XtreamChannel, start: Date, keywords: [String],
-                              client: XtreamClient) async -> ChannelMatch? {
-        let guide = await XtreamCache.shared.fullEPG(client, streamID: channel.id)
-        var best: ChannelMatch?
-        for entry in guide {
-            guard let begins = entry.start, let ends = entry.end,
-                  // On air around the start (allowing for build-up shows).
-                  begins <= start.addingTimeInterval(20 * 60),
-                  ends >= start.addingTimeInterval(5 * 60) else { continue }
-            let text = (entry.title + " " + entry.description).lowercased()
-            let score = keywords.filter { text.contains($0) }.count
-            if score > 0, score > (best?.score ?? 0) {
-                best = ChannelMatch(channel: channel, programme: entry, score: score)
-            }
-        }
-        return best
     }
 }

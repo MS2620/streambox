@@ -22,6 +22,8 @@ struct XtreamChannel: Decodable, Identifiable, Hashable {
     let name: String
     let icon: String?
     let categoryID: String?
+    /// The channel's id in the provider's XMLTV guide; several streams can share one.
+    let epgChannelID: String?
 
     private enum CodingKeys: String, CodingKey {
         case streamID = "stream_id"
@@ -29,6 +31,7 @@ struct XtreamChannel: Decodable, Identifiable, Hashable {
         case name
         case streamIcon = "stream_icon"
         case categoryID = "category_id"
+        case epgChannelID = "epg_channel_id"
     }
 
     init(from decoder: Decoder) throws {
@@ -39,6 +42,8 @@ struct XtreamChannel: Decodable, Identifiable, Hashable {
         let rawIcon = try? c.decode(String.self, forKey: .streamIcon)
         icon = (rawIcon?.isEmpty ?? true) ? nil : rawIcon
         categoryID = c.flexString(.categoryID)
+        let epg = c.flexString(.epgChannelID)?.trimmingCharacters(in: .whitespaces)
+        epgChannelID = (epg?.isEmpty ?? true) ? nil : epg
     }
 }
 
@@ -53,6 +58,13 @@ struct XtreamEPGEntry: Decodable, Hashable {
         case description
         case startTimestamp = "start_timestamp"
         case stopTimestamp = "stop_timestamp"
+    }
+
+    init(title: String, description: String, start: Date?, end: Date?) {
+        self.title = title
+        self.description = description
+        self.start = start
+        self.end = end
     }
 
     init(from decoder: Decoder) throws {
@@ -137,6 +149,22 @@ private struct ShortEPGResponse: Decodable {
     private enum CodingKeys: String, CodingKey { case epgListings = "epg_listings" }
 }
 
+struct XtreamAccountInfo: Equatable {
+    var signedIn: Bool
+    var status: String
+    var expires: Date? = nil
+    var activeConnections: Int? = nil
+    var maxConnections: Int? = nil
+
+    var isActive: Bool { signedIn && status.lowercased() == "active" }
+
+    /// "0 of 1 in use", when the provider says.
+    var connectionsText: String? {
+        guard let maxConnections else { return nil }
+        return "\(activeConnections ?? 0) of \(maxConnections) in use"
+    }
+}
+
 struct XtreamClient {
     let account: XtreamAccount
     /// Optional User-Agent override; some providers only accept specific players.
@@ -162,17 +190,36 @@ struct XtreamClient {
         return try await URLSession.shared.fetch(request)
     }
 
-    /// Returns a short status string, e.g. "Active · expires 12 Mar 2027".
-    func authenticate() async throws -> String {
+    /// The account's state as the provider reports it.
+    func accountInfo() async throws -> XtreamAccountInfo {
         let data = try await api(nil)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let user = json["user_info"] as? [String: Any],
-              "\(user["auth"] ?? "0")" == "1" else {
-            return "Login failed"
+              let user = json["user_info"] as? [String: Any] else {
+            return XtreamAccountInfo(signedIn: false, status: "Login failed")
         }
-        var status = (user["status"] as? String) ?? "Active"
-        if let exp = user["exp_date"].flatMap({ "\($0)" }), let seconds = TimeInterval(exp) {
-            status += " · expires " + Date(timeIntervalSince1970: seconds).formatted(date: .abbreviated, time: .omitted)
+        func text(_ key: String) -> String? {
+            guard let value = user[key], !(value is NSNull) else { return nil }
+            return "\(value)"
+        }
+        guard text("auth") == "1" else {
+            return XtreamAccountInfo(signedIn: false, status: "Login failed")
+        }
+        return XtreamAccountInfo(
+            signedIn: true,
+            status: text("status") ?? "Active",
+            expires: text("exp_date").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) },
+            activeConnections: text("active_cons").flatMap { Int($0) },
+            maxConnections: text("max_connections").flatMap { Int($0) }
+        )
+    }
+
+    /// Returns a short status string, e.g. "Active · expires 12 Mar 2027".
+    func authenticate() async throws -> String {
+        let info = try await accountInfo()
+        guard info.signedIn else { return info.status }
+        var status = info.status
+        if let expires = info.expires {
+            status += " · expires " + expires.formatted(date: .abbreviated, time: .omitted)
         }
         return status
     }
@@ -270,6 +317,16 @@ struct XtreamClient {
         let user = account.username.formEncoded
         let pass = account.password.formEncoded
         return URL(string: "\(account.normalizedServer)/series/\(user)/\(pass)/\(episode.id).\(episode.fileExtension)")
+    }
+
+    /// The provider's whole TV guide as one XMLTV file.
+    var xmltvURL: URL? {
+        guard var comps = URLComponents(string: "\(account.normalizedServer)/xmltv.php") else { return nil }
+        comps.queryItems = [
+            URLQueryItem(name: "username", value: account.username),
+            URLQueryItem(name: "password", value: account.password),
+        ]
+        return comps.url
     }
 
     func liveURL(for channel: XtreamChannel, format: LiveStreamFormat = .hls) -> URL? {

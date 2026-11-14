@@ -101,6 +101,8 @@ struct CatalogView: View {
 
     @State private var hero: HeroContent?
     @State private var pending: HeroContent?
+    /// The row holding focus; it is scrolled so its title sits just below the banner.
+    @State private var focusedRow: String?
 
     /// Height of the banner's text area; the rows scroll underneath it.
     private static let heroHeight: CGFloat = 590
@@ -120,15 +122,25 @@ struct CatalogView: View {
                         HeroInfo(hero: hero)
                             .frame(height: Self.heroHeight)
 
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 30) {
-                                rows
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 30) {
+                                    rows
+                                }
+                                .padding(.top, 4)
+                                .padding(.bottom, 90)
                             }
-                            .padding(.top, 4)
-                            .padding(.bottom, 90)
+                            .contentMargins(.horizontal, 0, for: .scrollContent)
+                            .ignoresSafeArea()
+                            // Rows scrolled past are cut off at the banner instead of running under its text.
+                            .clipShape(Rectangle())
+                            .onChange(of: focusedRow) { _, row in
+                                guard let row else { return }
+                                withAnimation(.easeOut(duration: 0.25)) {
+                                    proxy.scrollTo(row, anchor: .top)
+                                }
+                            }
                         }
-                        .contentMargins(.horizontal, 0, for: .scrollContent)
-                        .ignoresSafeArea()
                     }
                     .ignoresSafeArea()
                 }
@@ -139,6 +151,7 @@ struct CatalogView: View {
             .navigationDestination(for: XtreamSeries.self) { series in
                 ProviderSeriesView(series: series)
             }
+            .task(id: defaultHeroKey) { await showFirstItem() }
             .task(id: pending?.key) {
                 guard let next = pending else { return }
                 // Wait a moment so skimming along a row doesn't flash every backdrop.
@@ -157,51 +170,109 @@ struct CatalogView: View {
         case .home:
             ForEach(settings.visibleHomeRows) { row in
                 homeRow(row)
+                    .id("home:" + row.rawValue)
             }
         case .movies:
-            LazyRail(section: Catalog.trendingMovies, onFocus: focus, onLoaded: loaded)
-            MyListRow(kind: .movie, onFocus: focus)
+            LazyRail(section: Catalog.trendingMovies, onFocus: focus(in: "trending"), onLoaded: loaded)
+                .id("trending")
+            MyListRow(kind: .movie, onFocus: focus(in: "mylist"))
+                .id("mylist")
             if settings.prefs.showProviderMovies {
-                ProviderMoviesRow(onFocus: focus)
+                ProviderMoviesRow(onFocus: focus(in: "provider"))
+                    .id("provider")
             }
             ForEach(Catalog.movies) { section in
-                LazyRail(section: section, onFocus: focus, onLoaded: loaded)
+                LazyRail(section: section, onFocus: focus(in: "section:" + section.id), onLoaded: loaded)
+                    .id("section:" + section.id)
             }
         case .series:
-            MyListRow(kind: .tv, onFocus: focus)
-            LazyRail(section: Catalog.trendingSeries, onFocus: focus, onLoaded: loaded)
+            MyListRow(kind: .tv, onFocus: focus(in: "mylist"))
+                .id("mylist")
+            LazyRail(section: Catalog.trendingSeries, onFocus: focus(in: "trending"), onLoaded: loaded)
+                .id("trending")
             if settings.prefs.showProviderSeries {
-                ProviderSeriesRow(onFocus: focus)
+                ProviderSeriesRow(onFocus: focus(in: "provider"))
+                    .id("provider")
             }
             ForEach(Catalog.series) { section in
-                LazyRail(section: section, onFocus: focus, onLoaded: loaded)
+                LazyRail(section: section, onFocus: focus(in: "section:" + section.id), onLoaded: loaded)
+                    .id("section:" + section.id)
             }
         }
     }
 
     @ViewBuilder
     private func homeRow(_ row: HomeRow) -> some View {
+        let rowID = "home:" + row.rawValue
         switch row {
         case .myList:
-            MyListRow(kind: nil, onFocus: focus)
+            MyListRow(kind: nil, onFocus: focus(in: rowID))
         case .channels:
-            FavouriteChannelsRow(onFocus: focus)
+            FavouriteChannelsRow(onFocus: focus(in: rowID))
         case .teams:
-            UpcomingFixturesRow(onFocus: focus)
+            UpcomingFixturesRow(onFocus: focus(in: rowID))
         default:
             if let section = Catalog.homeSection(row) {
-                LazyRail(section: section, onFocus: focus, onLoaded: loaded)
+                LazyRail(section: section, onFocus: focus(in: rowID), onLoaded: loaded)
             }
         }
     }
 
-    private func focus(_ content: HeroContent) {
-        pending = content
+    /// The focus handler for one row: updates the banner and lines the row up under it.
+    private func focus(in row: String) -> (HeroContent) -> Void {
+        { content in
+            pending = content
+            if focusedRow != row { focusedRow = row }
+        }
     }
 
     /// The first row to load fills the banner until something is focused.
     private func loaded(_ content: HeroContent) {
         if hero == nil && pending == nil { pending = content }
+    }
+
+    // MARK: Banner on open
+
+    private var defaultHeroKey: String {
+        "\(mode)|\(settings.tmdbToken.count)|\(settings.prefs.tmdbLanguage)|\(settings.homeRowOrder.map(\.rawValue))"
+    }
+
+    private func myListItems(_ kind: MediaType?) -> [TMDBItem] {
+        settings.prefs.myList.reversed().filter { kind == nil || $0.kind == kind }
+    }
+
+    /// Fills the banner with the first title of the first row as soon as the page
+    /// opens, even when that row is below the visible area or not a catalogue row.
+    private func showFirstItem() async {
+        guard hero == nil, pending == nil, !settings.tmdbToken.isEmpty else { return }
+
+        var sections: [CatalogSection] = []
+        switch mode {
+        case .home:
+            for row in settings.visibleHomeRows {
+                if row == .myList, let first = myListItems(nil).first {
+                    pending = HeroContent(item: first, row: "My List")
+                    return
+                }
+                if let section = Catalog.homeSection(row) { sections.append(section) }
+            }
+        case .movies:
+            sections = [Catalog.trendingMovies]
+        case .series:
+            if let first = myListItems(.tv).first {
+                pending = HeroContent(item: first, row: "My List")
+                return
+            }
+            sections = [Catalog.trendingSeries]
+        }
+
+        for section in sections {
+            guard let items = try? await section.fetch(settings.tmdb), let first = items.first else { continue }
+            if hero == nil, pending == nil {
+                pending = HeroContent(item: first, row: section.id)
+            }
+            return
+        }
     }
 }
 

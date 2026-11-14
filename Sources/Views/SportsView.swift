@@ -344,14 +344,19 @@ struct FixtureDetailView: View {
     @EnvironmentObject var settings: AppSettings
     let fixture: Fixture
 
-    @State private var matches: [ChannelMatch] = []
+    @State private var result = ChannelSearch()
     @State private var searching = false
     @State private var searched = false
     @State private var playback: PlaybackRequest?
+    @State private var showingSportsChannels = false
 
-    /// Providers' guides rarely go more than about a week ahead.
-    private var tooFarAhead: Bool {
-        fixture.guideTime > Date().addingTimeInterval(8 * 86_400)
+    private var matches: [ChannelMatch] { result.matches }
+
+    /// The provider's guide doesn't reach the fixture yet. Without the whole
+    /// guide, guides rarely go more than about a week ahead.
+    private var notListedYet: Bool {
+        if let ends = result.guideEnds { return fixture.guideTime > ends }
+        return fixture.guideTime > Date().addingTimeInterval(8 * 86_400)
     }
 
     var body: some View {
@@ -400,8 +405,11 @@ struct FixtureDetailView: View {
                     }
                 }
 
-                GlassPanel("Watch") {
+                GlassPanel(matches.isEmpty ? "Watch" : "Watch · \(matches.count) in your TV guide") {
                     guideSection
+                }
+                if !matches.isEmpty {
+                    SettingsNote("Found by searching every channel's TV guide at kick-off time. Hidden groups and channels are skipped.")
                 }
 
                 if !fixture.broadcasts.isEmpty {
@@ -416,9 +424,12 @@ struct FixtureDetailView: View {
             .padding(.vertical, 60)
         }
         .background(AppBackground())
-        .task { await search() }
+        .task { await search(force: false) }
         .fullScreenCover(item: $playback) { request in
             PlayerView(request: request).ignoresSafeArea()
+        }
+        .sheet(isPresented: $showingSportsChannels) {
+            SportsChannelsSheet()
         }
     }
 
@@ -434,28 +445,66 @@ struct FixtureDetailView: View {
     private var guideSection: some View {
         if !settings.xtream.isConfigured {
             note("Add your IPTV login in Settings → Connections to find this in your TV guide.")
-        } else if tooFarAhead {
-            note("It's not in your TV guide yet — guides usually only cover the next few days. Come back closer to the time.")
         } else if searching || !searched {
             ProgressView("Searching your TV guide…")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
         } else if matches.isEmpty {
-            note("Couldn't find this in your TV guide yet. Listings can appear late — come back later.")
+            notFound
         } else {
             ForEach(Array(matches.enumerated()), id: \.element.id) { index, match in
                 Button {
                     play(index)
                 } label: {
-                    ListRowLabel(title: match.channel.name,
-                                 subtitle: programmeLine(match.programme),
-                                 logoURL: match.channel.icon.flatMap { URL(string: $0) },
-                                 showsLogo: true,
-                                 trailing: "Tune in")
+                    MatchRowLabel(match: match, line: programmeLine(match.programme))
                 }
                 .buttonStyle(PlainPressStyle())
             }
         }
+    }
+
+    /// Nothing found: either the guide doesn't reach the date yet, or nothing matched.
+    private var notFound: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 20) {
+                Image(systemName: "clock")
+                    .font(.system(size: 36, weight: .semibold))
+                    .opacity(0.85)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(notListedYet ? "Not in your TV guide yet" : "Not found in your TV guide")
+                        .font(.system(size: 30, weight: .bold))
+                    Text(notFoundDetail)
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack(spacing: 16) {
+                Button {
+                    Task { await search(force: true) }
+                } label: {
+                    PillLabel(title: "Check again", icon: "arrow.clockwise")
+                }
+                .buttonStyle(PlainPressStyle())
+                Button {
+                    showingSportsChannels = true
+                } label: {
+                    PillLabel(title: "Open sports channels", icon: "antenna.radiowaves.left.and.right")
+                }
+                .buttonStyle(PlainPressStyle())
+            }
+            .padding(.leading, 56)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private var notFoundDetail: String {
+        if notListedYet {
+            let reach = result.guideEnds.map { "Your provider's guide reaches " + $0.formatted(.dateTime.weekday(.wide).day().month(.wide)) + ". " } ?? ""
+            return reach + "Channels showing this will appear here once it's listed — usually a day or two before."
+        }
+        return "None of your channels list it at that time. Listings can be added late, so try again closer to the start."
     }
 
     private func programmeLine(_ entry: XtreamEPGEntry) -> String {
@@ -463,16 +512,17 @@ struct FixtureDetailView: View {
         return times.isEmpty ? entry.title : "\(entry.title) · \(times)"
     }
 
-    private func search() async {
-        guard settings.xtream.isConfigured, !tooFarAhead, !searched else { return }
+    private func search(force: Bool) async {
+        guard settings.xtream.isConfigured, !searching else { return }
         searching = true
         let prefs = settings.prefs
-        var extra = prefs.favouriteChannelIDs
-        for folder in prefs.folders { extra.formUnion(folder.channelIDs) }
-        matches = await ChannelFinder.matches(for: fixture, client: settings.xtreamClient,
-                                              hiddenCategories: prefs.hiddenCategoryIDs,
-                                              hiddenChannels: prefs.hiddenChannelIDs,
-                                              alwaysInclude: extra)
+        var preferred = prefs.favouriteChannelIDs
+        for folder in prefs.folders { preferred.formUnion(folder.channelIDs) }
+        result = await ChannelFinder.search(for: fixture, client: settings.xtreamClient,
+                                            teams: prefs.favouriteTeams,
+                                            hiddenCategories: prefs.hiddenCategoryIDs,
+                                            hiddenChannels: prefs.hiddenChannelIDs,
+                                            preferred: preferred, force: force)
         searching = false
         searched = true
     }
@@ -487,6 +537,121 @@ struct FixtureDetailView: View {
             title: channel.name,
             artworkURL: channel.icon.flatMap { URL(string: $0) },
             sourceName: fixture.competition,
+            isLive: true,
+            httpHeaders: client.requestHeaders,
+            live: LiveContext(channels: channels, index: index)
+        )
+    }
+}
+
+/// A channel showing the fixture: logo, name, the listing and "Tune in".
+private struct MatchRowLabel: View {
+    let match: ChannelMatch
+    let line: String
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        HStack(spacing: 18) {
+            AsyncImage(url: match.channel.icon.flatMap { URL(string: $0) }) { image in
+                image.resizable().aspectRatio(contentMode: .fit)
+            } placeholder: {
+                RoundedRectangle(cornerRadius: 6).fill(Theme.glassStrong)
+            }
+            .frame(width: 86, height: 48)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(match.channel.name)
+                    .font(.system(size: 26, weight: .semibold))
+                    .lineLimit(1)
+                Text(line)
+                    .font(.system(size: 19, weight: .medium))
+                    .opacity(0.7)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 12)
+            if match.bothTeams {
+                Text("Both teams")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(isFocused ? Theme.ink : Theme.glassStrong))
+            }
+            Text("Tune in")
+                .font(.system(size: 22, weight: .bold))
+        }
+        .foregroundStyle(isFocused ? Theme.ink : Color.white)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(isFocused ? Color.white : Color.clear)
+        )
+        .animation(.easeOut(duration: 0.12), value: isFocused)
+    }
+}
+
+/// Every channel that looks like a sports channel, to pick one by hand.
+private struct SportsChannelsSheet: View {
+    @EnvironmentObject var settings: AppSettings
+    @State private var channels: [XtreamChannel] = []
+    @State private var loading = true
+    @State private var playback: PlaybackRequest?
+
+    var body: some View {
+        ZStack {
+            AppBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Text("Sports channels")
+                        .font(.system(size: 44, weight: .heavy))
+                    if loading {
+                        ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+                    } else if channels.isEmpty {
+                        Text("No sports channels found in your groups.")
+                            .foregroundStyle(.white.opacity(0.7))
+                    } else {
+                        GlassPanel {
+                            ForEach(Array(channels.enumerated()), id: \.element.id) { index, channel in
+                                Button {
+                                    play(index)
+                                } label: {
+                                    ListRowLabel(title: channel.name,
+                                                 logoURL: channel.icon.flatMap { URL(string: $0) },
+                                                 showsLogo: true,
+                                                 trailing: "Tune in")
+                                }
+                                .buttonStyle(PlainPressStyle())
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: 1100)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
+            }
+        }
+        .task {
+            let prefs = settings.prefs
+            channels = await ChannelFinder.sportsChannels(client: settings.xtreamClient,
+                                                          hiddenCategories: prefs.hiddenCategoryIDs,
+                                                          hiddenChannels: prefs.hiddenChannelIDs)
+            loading = false
+        }
+        .fullScreenCover(item: $playback) { request in
+            PlayerView(request: request).ignoresSafeArea()
+        }
+    }
+
+    private func play(_ index: Int) {
+        let client = settings.xtreamClient
+        let channel = channels[index]
+        guard let url = client.liveURL(for: channel, format: settings.prefs.liveFormat) else { return }
+        playback = PlaybackRequest(
+            url: url,
+            title: channel.name,
+            artworkURL: channel.icon.flatMap { URL(string: $0) },
+            sourceName: "Sports",
             isLive: true,
             httpHeaders: client.requestHeaders,
             live: LiveContext(channels: channels, index: index)

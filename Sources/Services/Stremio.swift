@@ -4,6 +4,8 @@ struct AddonManifest: Decodable {
     let id: String
     let name: String
     let version: String?
+    let description: String?
+    let types: [String]?
 }
 
 /// A stream object as defined by the Stremio addon protocol.
@@ -12,8 +14,15 @@ struct StremioStream: Decodable, Hashable {
     let title: String?
     let description: String?
     let url: String?
+    /// Set on torrent-only results. StreamBox can't play those, so they are skipped.
     let infoHash: String?
-    let fileIdx: Int?
+
+    /// A direct web link the player can open, if the addon gave one.
+    var playableURL: URL? {
+        guard let url, let parsed = URL(string: url),
+              let scheme = parsed.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        return parsed
+    }
 
     var headline: String {
         (name ?? "Stream").replacingOccurrences(of: "\n", with: " · ")
@@ -43,8 +52,7 @@ struct FoundStream: Identifiable {
     let stream: StremioStream
 }
 
-/// Talks to any Stremio-compatible addon (the user supplies the manifest URL,
-/// typically with their own debrid key in the addon's config).
+/// Talks to any Stremio-compatible addon. The user supplies the manifest URL.
 struct StremioAddonClient {
     let manifestURL: URL
 

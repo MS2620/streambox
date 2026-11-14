@@ -129,7 +129,7 @@ struct Preferences: Codable, Equatable {
     var dialogueBoost = false
     var nightMode = false
 
-    // Streams (debrid / addons)
+    // Streams (Stremio addons)
     var maxResolution: MaxResolution = .any
     var streamSort: StreamSort = .quality
     var autoPlayFirstStream = false

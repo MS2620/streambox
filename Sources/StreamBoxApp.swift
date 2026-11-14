@@ -15,31 +15,44 @@ struct StreamBoxApp: App {
     }
 }
 
+enum AppTab: Hashable {
+    case home, movies, series, live, sports, calendar, search, settings
+}
+
 struct RootView: View {
+    @State private var tab: AppTab = .home
+
     var body: some View {
-        TabView {
-            Tab("Home", systemImage: "house") {
+        TabView(selection: $tab) {
+            Tab("Home", systemImage: "house", value: AppTab.home) {
                 CatalogView(mode: .home)
             }
-            Tab("Movies", systemImage: "film") {
+            Tab("Movies", systemImage: "film", value: AppTab.movies) {
                 CatalogView(mode: .movies)
             }
-            Tab("Series", systemImage: "play.tv") {
+            Tab("Series", systemImage: "play.tv", value: AppTab.series) {
                 CatalogView(mode: .series)
             }
-            Tab("Live TV", systemImage: "antenna.radiowaves.left.and.right") {
+            Tab("Live TV", systemImage: "antenna.radiowaves.left.and.right", value: AppTab.live) {
                 LiveTVView()
             }
-            Tab("Sports", systemImage: "sportscourt") {
+            // Sports and Calendar show only their icon, which keeps the bar on one line.
+            Tab(value: AppTab.sports) {
                 SportsView()
+            } label: {
+                Image(systemName: "sportscourt")
+                    .accessibilityLabel("Sports")
             }
-            Tab("Calendar", systemImage: "calendar") {
+            Tab(value: AppTab.calendar) {
                 CalendarView()
+            } label: {
+                Image(systemName: "calendar")
+                    .accessibilityLabel("Calendar")
             }
-            Tab("Search", systemImage: "magnifyingglass", role: .search) {
+            Tab("Search", systemImage: "magnifyingglass", value: AppTab.search, role: .search) {
                 SearchView()
             }
-            Tab("Settings", systemImage: "gearshape") {
+            Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsView()
             }
         }
