@@ -500,6 +500,9 @@ struct LiveTVView: View {
 
     @ViewBuilder
     private func channelMenu(_ channel: XtreamChannel) -> some View {
+        Button("Add to multiview", systemImage: "rectangle.split.2x1") {
+            MultiviewStore.shared.add(channel)
+        }
         if prefs.favouriteChannelIDs.contains(channel.id) {
             Button("Remove from Favourites", systemImage: "star.slash") {
                 settings.prefs.favouriteChannelIDs.remove(channel.id)
