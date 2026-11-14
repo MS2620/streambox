@@ -16,6 +16,7 @@ Sources/
   StreamBoxApp.swift         App entry + tab bar
   Core/                      Keychain, settings, helpers
   Services/                  TMDB, Stremio addon, Real-Debrid, Xtream clients
+  Player/                    mpv (MPVKit) player controller
   Views/                     Home/Search, Detail + stream picker, Live TV, Settings, Player
 .github/workflows/build.yml  CI: unsigned build (free) + optional TestFlight upload
 ```
@@ -27,6 +28,15 @@ Sources/
 2. The **Build** workflow runs on every push and compiles the app for tvOS.
    A green tick means the code compiles. You can't install it yet.
 3. To install on your Apple TV you need a **paid Apple Developer account** (see below).
+
+## Building with Codemagic (alternative to GitHub Actions)
+
+1. Push this folder to a GitHub repo (public or private; the build doesn't use GitHub Actions).
+2. Sign in at codemagic.io with GitHub and add the repo as an application.
+3. Codemagic detects `codemagic.yaml`. Start the **tvOS unsigned IPA** workflow
+   (or push to `main` once the webhook is set up).
+4. Download `StreamBox-unsigned.ipa` from the build's Artifacts and sideload it
+   with Sideloadly or atvloadly using your Apple ID.
 
 ## Turning on TestFlight (needs a paid account)
 
@@ -65,7 +75,7 @@ Tip: typing on the Apple TV is painful. Your iPhone shows a keyboard notificatio
 1. ~~Shell, TMDB rails, detail pages~~
 2. ~~Xtream live TV + short EPG~~
 3. ~~Stremio addon streams + Real-Debrid resolve~~
-4. **Player:** replace AVPlayer with MPVKit or KSPlayer. AVPlayer can't play most MKV / DTS / TrueHD / PGS debrid files.
+4. ~~Player: mpv via MPVKit (MKV, HEVC, DTS/TrueHD, PGS/ASS subtitles)~~. Next: resume positions, track picker UI, HDR/frame-rate matching
 5. Xtream VOD + series, full XMLTV EPG grid, favourites
 6. Continue watching / resume positions, Trakt sync
 7. More debrid providers (AllDebrid, Premiumize, TorBox), stream ranking and auto-pick

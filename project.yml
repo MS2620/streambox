@@ -8,11 +8,18 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+packages:
+  MPVKit:
+    url: https://github.com/mpvkit/MPVKit
+    from: 1.0.0
 targets:
   StreamBox:
     type: application
     platform: tvOS
     sources: [Sources]
+    dependencies:
+      - package: MPVKit
+        product: MPVKit
     scheme: {}
     info:
       path: Config/Info.plist

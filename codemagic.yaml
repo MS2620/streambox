@@ -1,0 +1,42 @@
+workflows:
+  tvos-unsigned:
+    name: tvOS unsigned IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Install XcodeGen
+        script: brew install xcodegen
+
+      - name: Generate Xcode project
+        script: xcodegen generate
+
+      - name: Build for tvOS (unsigned)
+        script: |
+          xcodebuild -version
+          xcodebuild \
+            -project StreamBox.xcodeproj \
+            -scheme StreamBox \
+            -configuration Release \
+            -destination 'generic/platform=tvOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        script: |
+          rm -rf Payload StreamBox-unsigned.ipa
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-appletvos/StreamBox.app Payload/
+          zip -qry StreamBox-unsigned.ipa Payload
+
+    artifacts:
+      - StreamBox-unsigned.ipa
+      - build/Logs/**/*.xcactivitylog
