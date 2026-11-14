@@ -908,7 +908,7 @@ struct AppearanceSettingsView: View {
                 SettingsOptionRow("Background", icon: "paintbrush", selection: $settings.prefs.backgroundStyle,
                                   options: BackgroundStyle.allCases.map { ($0, $0.label) })
             }
-            SettingsNote("Frosted is the soft coloured backdrop behind Live TV, Sports, Calendar, Search and Settings. Dark is plain and easier on the eyes at night.")
+            SettingsNote("The backdrop behind Live TV, Sports, Calendar, Search and Settings. Frosted, Ocean, Sunset, Forest, Aurora and Rosé are soft coloured glows; Dark is plain and easier on the eyes at night; Black is pure black, best on OLED TVs.")
         }
     }
 }
