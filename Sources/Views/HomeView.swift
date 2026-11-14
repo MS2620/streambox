@@ -499,6 +499,7 @@ struct RailView: View {
                 .padding(.horizontal, inset)
                 .padding(.bottom, 30)
             }
+            .focusRow()
             .scrollClipDisabled()
             .overlay(alignment: .topLeading) {
                 RowTitle(text: title, inset: inset)
@@ -684,6 +685,7 @@ private struct FavouriteChannelsRow: View {
                         .padding(.horizontal, 90)
                         .padding(.bottom, 30)
                     }
+                    .focusRow()
                     .scrollClipDisabled()
                     .overlay(alignment: .topLeading) {
                         RowTitle(text: "Favourite Channels", inset: 90)
@@ -758,6 +760,7 @@ private struct UpcomingFixturesRow: View {
                         .padding(.horizontal, 90)
                         .padding(.bottom, 30)
                     }
+                    .focusRow()
                     .scrollClipDisabled()
                     .overlay(alignment: .topLeading) {
                         RowTitle(text: "My Teams", inset: 90)
@@ -813,6 +816,7 @@ private struct ProviderMoviesRow: View {
                         .padding(.horizontal, 90)
                         .padding(.bottom, 30)
                     }
+                    .focusRow()
                     .scrollClipDisabled()
                     .overlay(alignment: .topLeading) {
                         RowTitle(text: "From Your Provider · Recently Added", inset: 90)
@@ -867,6 +871,7 @@ private struct ProviderSeriesRow: View {
                         .padding(.horizontal, 90)
                         .padding(.bottom, 30)
                     }
+                    .focusRow()
                     .scrollClipDisabled()
                     .overlay(alignment: .topLeading) {
                         RowTitle(text: "From Your Provider · Recently Updated", inset: 90)
@@ -952,6 +957,7 @@ struct ProviderSeriesView: View {
                         }
                         .padding(.vertical, 10)
                     }
+                    .focusRow()
                     .scrollClipDisabled()
 
                     GlassPanel("Episodes") {
@@ -1114,6 +1120,7 @@ struct ContinueWatchingRow: View {
                     .padding(.horizontal, 90)
                     .padding(.bottom, 30)
                 }
+                .focusRow()
                 .scrollClipDisabled()
                 .overlay(alignment: .topLeading) {
                     RowTitle(text: "Continue Watching", inset: 90)

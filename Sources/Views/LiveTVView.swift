@@ -276,6 +276,7 @@ struct LiveTVView: View {
                                         .allowsHitTesting(false)
                                 }
                             }
+                            .focusRow()
                         }
 
                         if channels.count > Self.guideRowLimit {

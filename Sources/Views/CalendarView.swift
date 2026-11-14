@@ -98,6 +98,7 @@ struct CalendarView: View {
                 .padding(.horizontal, 90)
                 .padding(.vertical, 30)
             }
+            .focusRow()
             .scrollClipDisabled()
         }
     }

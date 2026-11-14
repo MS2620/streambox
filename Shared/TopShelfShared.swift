@@ -17,8 +17,12 @@ struct TopShelfSnapshot: Codable {
     var continueWatching: [TopShelfItem] = []
     /// Followed teams' matches and races today and tomorrow.
     var upcoming: [TopShelfItem] = []
+    var myList: [TopShelfItem] = []
+    /// Only filled when everything above is empty, so the shelf is never blank.
+    var trending: [TopShelfItem] = []
 
-    var isEmpty: Bool { live.isEmpty && continueWatching.isEmpty && upcoming.isEmpty }
+    var isEmpty: Bool { cardCount == 0 }
+    var cardCount: Int { live.count + continueWatching.count + upcoming.count + myList.count + trending.count }
 
     init() {}
 
@@ -28,6 +32,8 @@ struct TopShelfSnapshot: Codable {
         live = (try? c.decode([TopShelfItem].self, forKey: .live)) ?? []
         continueWatching = (try? c.decode([TopShelfItem].self, forKey: .continueWatching)) ?? []
         upcoming = (try? c.decode([TopShelfItem].self, forKey: .upcoming)) ?? []
+        myList = (try? c.decode([TopShelfItem].self, forKey: .myList)) ?? []
+        trending = (try? c.decode([TopShelfItem].self, forKey: .trending)) ?? []
     }
 }
 
@@ -87,6 +93,19 @@ enum TopShelfStore {
         guard let defaults = UserDefaults(suiteName: appGroup),
               let data = try? JSONEncoder().encode(snapshot) else { return }
         defaults.set(data, forKey: key)
+    }
+
+    /// The extension notes each time tvOS asks it for the shelf, so Settings can show it's working.
+    static func recordRead(cards: Int) {
+        let defaults = UserDefaults(suiteName: appGroup)
+        defaults?.set(Date(), forKey: "topShelfLastRead")
+        defaults?.set(cards, forKey: "topShelfLastReadCards")
+    }
+
+    static var lastRead: (date: Date, cards: Int)? {
+        guard let defaults = UserDefaults(suiteName: appGroup),
+              let date = defaults.object(forKey: "topShelfLastRead") as? Date else { return nil }
+        return (date, defaults.integer(forKey: "topShelfLastReadCards"))
     }
 
     static func read() -> TopShelfSnapshot? {

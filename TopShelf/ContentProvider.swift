@@ -4,7 +4,9 @@ import TVServices
 /// from what StreamBox last published.
 final class ContentProvider: TVTopShelfContentProvider {
     override func loadTopShelfContent(completionHandler: @escaping (TVTopShelfContent?) -> Void) {
-        guard let snapshot = TopShelfStore.read(), !snapshot.isEmpty else {
+        let snapshot = TopShelfStore.read()
+        TopShelfStore.recordRead(cards: snapshot?.cardCount ?? 0)
+        guard let snapshot, !snapshot.isEmpty else {
             completionHandler(nil)
             return
         }
@@ -22,6 +24,16 @@ final class ContentProvider: TVTopShelfContentProvider {
         if !snapshot.upcoming.isEmpty {
             let section = TVTopShelfItemCollection(items: snapshot.upcoming.map(Self.item))
             section.title = "Coming up"
+            sections.append(section)
+        }
+        if !snapshot.myList.isEmpty {
+            let section = TVTopShelfItemCollection(items: snapshot.myList.map(Self.item))
+            section.title = "My List"
+            sections.append(section)
+        }
+        if !snapshot.trending.isEmpty {
+            let section = TVTopShelfItemCollection(items: snapshot.trending.map(Self.item))
+            section.title = "Trending"
             sections.append(section)
         }
         completionHandler(TVTopShelfSectionedContent(sections: sections))

@@ -50,12 +50,24 @@ struct SettingsView: View {
                     .sheet(isPresented: $showingNotes) {
                         if let latest = updates.latest { UpdateNotes(release: latest) }
                     }
-                    SettingsInfoRow("Top Shelf", icon: "rectangle.topthird.inset.filled",
-                                    value: TopShelfStore.isAvailable ? "Ready" : "Blocked by signing (no App Group)")
+                    SettingsInfoRow("Top Shelf", icon: "rectangle.topthird.inset.filled", value: Self.topShelfStatus)
                     SettingsInfoRow("Player engine", icon: "cpu", value: "AetherEngine")
                 }
             }
         }
+    }
+
+    /// "Ready · 12 cards · shown 2 minutes ago", or why it isn't working.
+    static var topShelfStatus: String {
+        guard TopShelfStore.isAvailable else { return "Blocked by signing (no App Group)" }
+        let cards = TopShelfStore.read()?.cardCount ?? 0
+        var parts = ["Ready", cards == 1 ? "1 card" : "\(cards) cards"]
+        if let read = TopShelfStore.lastRead {
+            parts.append("shown " + read.date.formatted(.relative(presentation: .named)))
+        } else {
+            parts.append("not shown yet")
+        }
+        return parts.joined(separator: " · ")
     }
 
     static var version: String {

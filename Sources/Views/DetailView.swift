@@ -164,6 +164,8 @@ struct DetailView: View {
                 }
             }
             .padding(.top, 8)
+            // Up from an episode far to the right still reaches Play / My List.
+            .focusRow()
         }
         .padding(.horizontal, 90)
     }
@@ -289,6 +291,7 @@ struct DetailView: View {
                 .padding(.horizontal, 90)
                 .padding(.vertical, 20)
             }
+            .focusRow()
             .scrollClipDisabled()
             .onChange(of: seasons.count) { _, _ in
                 proxy.scrollTo(selectedSeason, anchor: .leading)
@@ -331,6 +334,7 @@ struct DetailView: View {
                     .padding(.horizontal, 90)
                     .padding(.vertical, 30)
                 }
+                .focusRow()
                 .scrollClipDisabled()
             }
         }
