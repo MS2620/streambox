@@ -286,6 +286,25 @@ final class TraktSync: ObservableObject {
         return result
     }
 
+    struct Backup: Codable {
+        var clientID: String
+        var clientSecret: String
+        var tokens: TraktTokens?
+        var username: String?
+    }
+
+    var backup: Backup {
+        Backup(clientID: clientID, clientSecret: clientSecret, tokens: tokens, username: username)
+    }
+
+    func restore(_ backup: Backup) {
+        clientID = backup.clientID
+        clientSecret = backup.clientSecret
+        store(backup.tokens)
+        username = backup.username
+        UserDefaults.standard.set(backup.username, forKey: "traktUsername")
+    }
+
     func signOut() {
         store(nil)
         username = nil

@@ -186,6 +186,26 @@ final class WatchHistory: ObservableObject {
         save()
     }
 
+    struct Snapshot: Codable {
+        var entries: [WatchEntry]
+        var watchedSeries: [String]
+        var dismissedNextUp: [String]
+    }
+
+    /// Everything here, for a backup.
+    var snapshot: Snapshot {
+        Snapshot(entries: Array(entries.values), watchedSeries: Array(watchedSeries),
+                 dismissedNextUp: Array(dismissedNextUp))
+    }
+
+    /// Replaces everything with a backup's.
+    func restore(_ snapshot: Snapshot) {
+        entries = Dictionary(snapshot.entries.map { ($0.id, $0) }, uniquingKeysWith: { a, b in a.updated > b.updated ? a : b })
+        watchedSeries = Set(snapshot.watchedSeries)
+        dismissedNextUp = Set(snapshot.dismissedNextUp)
+        save()
+    }
+
     /// Trakt's watched list, replacing the previous one.
     func setExternalWatched(_ keys: Set<String>) {
         externalWatched = keys

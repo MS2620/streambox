@@ -28,6 +28,12 @@ final class ParentalLock: ObservableObject {
         hasPIN = !(pin ?? "").isEmpty
     }
 
+    /// For a backup: the PIN itself.
+    var storedPIN: String? {
+        let pin = Keychain.string(for: Self.pinKey) ?? ""
+        return pin.isEmpty ? nil : pin
+    }
+
     func unlock(minutes: Int) {
         unlockedUntil = Date().addingTimeInterval(TimeInterval(max(minutes, 1)) * 60)
     }

@@ -59,6 +59,12 @@ final class ReminderStore: ObservableObject {
         save()
     }
 
+    /// Replaces the reminders with a backup's (past ones are dropped).
+    func restore(_ saved: [ProgrammeReminder]) {
+        reminders = saved.filter { $0.end > Date() }.sorted { $0.start < $1.start }
+        save()
+    }
+
     func dismissDue() {
         due = nil
     }
