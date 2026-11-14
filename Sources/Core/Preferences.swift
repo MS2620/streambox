@@ -167,6 +167,14 @@ struct Preferences: Codable, Equatable {
     var rememberLastCategory = true
     var iptvUserAgent = ""
     var hiddenCategoryIDs: Set<String> = []
+
+    // Parental controls (the PIN itself is in the Keychain)
+    var parentalControlsOn = false
+    var lockedCategoryIDs: Set<String> = []
+    /// Manifest URLs of addons whose streams need the PIN.
+    var lockedAddonIDs: Set<String> = []
+    var hideLockedGroups = false
+    var unlockMinutes = 15
     var favouriteChannelIDs: Set<Int> = []
     var lastCategoryID: String?
     var liveLayout: LiveLayout = .guide

@@ -25,6 +25,8 @@ struct SettingsView: View {
                                     value: settings.prefs.backgroundStyle.label) { AppearanceSettingsView() }
                     SettingsLinkRow("Sports", icon: "sportscourt") { SportsSettingsView() }
                     SettingsLinkRow("Calendar", icon: "calendar") { CalendarSettingsView() }
+                    SettingsLinkRow("Parental controls", icon: "lock",
+                                    value: settings.prefs.parentalControlsOn ? "On" : "Off") { ParentalControlsView() }
                 }
 
                 GlassPanel("About") {
