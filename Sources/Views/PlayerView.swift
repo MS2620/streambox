@@ -1,4 +1,6 @@
 import SwiftUI
+import Metal
+import MetalFX
 import Combine
 import AVFoundation
 import AetherEngine
@@ -611,15 +613,29 @@ private struct AetherPlaybackView: View {
 
     // MARK: - Loading
 
-    /// The engine's automatic upscaler (VideoToolbox super resolution) only takes video below
-    /// 1080p; the line-art one is the only one that takes 1080p. A stream labelled below 1080p
-    /// keeps the automatic one when that's switched on, since it's made for live action.
+    /// Animation takes the line-art upscaler (Anime4K). Live action takes the automatic one
+    /// (super resolution below 1080p, MetalFX at 1080p, via our AetherEngine fork), unless this
+    /// Apple TV has no MetalFX: then 1080p falls back to line art.
     private func vodScaler(wants1080p: Bool, prefs: Preferences) -> UpscaleScaler {
         guard wants1080p else { return .automatic }
+        if current.isAnimation { return .lineArt }
+        if Self.metalFXAvailable { return .automatic }
         let lines = current.sourceLines
         if prefs.upscaleLowResolution, lines > 0, lines < 1080 { return .automatic }
         return .lineArt
     }
+
+    /// The same test the engine makes before it uses MetalFX (tvOS 27.1 and a supported GPU).
+    static let metalFXAvailable: Bool = {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        if #available(tvOS 27.1, *) {
+            return MTLCreateSystemDefaultDevice().map { MTLFXSpatialScalerDescriptor.supportsDevice($0) } ?? false
+        }
+        return false
+        #endif
+    }()
 
     private func load() async {
         loadError = nil
@@ -638,9 +654,9 @@ private struct AetherPlaybackView: View {
                 suppressDisplayCriteria: !matchLive,
                 httpHeaders: current.httpHeaders,
                 upscalesLowResolutionVideo: prefs.upscaleLowResolution || prefs.upscale1080p == .everything,
-                // A channel's resolution isn't known before it loads, so "Everything" always
-                // takes the 1080p upscaler on live TV.
-                upscaleScaler: prefs.upscale1080p == .everything ? .lineArt : .automatic,
+                // Live channels are live action: MetalFX where this Apple TV has it,
+                // otherwise the line-art upscaler, the other one that takes 1080p.
+                upscaleScaler: prefs.upscale1080p == .everything && !Self.metalFXAvailable ? .lineArt : .automatic,
                 // Switching the TV's refresh rate blanks the screen for a moment on every
                 // channel change, so live TV only does it when asked (Settings → Live TV).
                 matchContentEnabled: prefs.matchContent && prefs.matchContentLive,
