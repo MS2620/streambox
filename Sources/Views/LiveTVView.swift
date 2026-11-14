@@ -15,6 +15,8 @@ private struct GuideSegment: Identifiable {
     let width: CGFloat
     let isGap: Bool
     let onNow: Bool
+    var start: Date? = nil
+    var end: Date? = nil
 }
 
 /// Live TV, as a TV guide (EPG grid) or a channel list. The layout is chosen
@@ -37,6 +39,8 @@ struct LiveTVView: View {
     @State private var windowStart = LiveTVView.halfHourFloor(Date())
     @State private var now = Date()
     @FocusState private var focusedCell: String?
+    @State private var reminderPrompt: ReminderPromptItem?
+    @ObservedObject private var reminders = ReminderStore.shared
 
     private static let favouritesID = "__favourites"
     private static let folderPrefix = "folder:"
@@ -255,6 +259,16 @@ struct LiveTVView: View {
                 }
             }
         }
+        .fullScreenCover(item: $reminderPrompt) { item in
+            ReminderPromptView(item: item) {
+                // Waits for the prompt to close before the player opens.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(450))
+                    play(item.channel)
+                }
+            }
+            .presentationBackground(.clear)
+        }
     }
 
     private var timeHeader: some View {
@@ -275,10 +289,17 @@ struct LiveTVView: View {
                     Color.clear.frame(width: segment.width, height: Self.rowHeight)
                 } else {
                     Button {
-                        play(channel)
+                        // A programme that hasn't started: offer a reminder. Otherwise watch.
+                        if let start = segment.start, let end = segment.end, start > Date() {
+                            reminderPrompt = ReminderPromptItem(channel: channel, title: segment.title,
+                                                                start: start, end: end)
+                        } else {
+                            play(channel)
+                        }
                     } label: {
                         ProgrammeCell(title: segment.title, time: segment.time, onNow: segment.onNow,
-                                      width: max(segment.width - 6, 4), height: Self.rowHeight)
+                                      width: max(segment.width - 6, 4), height: Self.rowHeight,
+                                      reminded: segment.start.map { reminders.isSet(channelID: channel.id, start: $0) } ?? false)
                     }
                     .buttonStyle(PlainPressStyle())
                     .focused($focusedCell, equals: segment.id)
@@ -322,7 +343,9 @@ struct LiveTVView: View {
                 time: "\(DayFormat.time(begins)) – \(DayFormat.time(ends))",
                 width: CGFloat(to.timeIntervalSince(from) / 60) * scale,
                 isGap: false,
-                onNow: begins <= now && now < ends
+                onNow: begins <= now && now < ends,
+                start: begins,
+                end: ends
             ))
             cursor = to
         }
@@ -657,13 +680,21 @@ private struct ProgrammeCell: View {
     let onNow: Bool
     let width: CGFloat
     let height: CGFloat
+    var reminded = false
     @Environment(\.isFocused) private var isFocused
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 22, weight: .semibold))
-                .lineLimit(1)
+            HStack(spacing: 8) {
+                if reminded {
+                    Image(systemName: "bell.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(isFocused ? Theme.ink : Color(red: 1, green: 0.7, blue: 0.25))
+                }
+                Text(title)
+                    .font(.system(size: 22, weight: .semibold))
+                    .lineLimit(1)
+            }
             if !time.isEmpty {
                 Text(time)
                     .font(.system(size: 18))

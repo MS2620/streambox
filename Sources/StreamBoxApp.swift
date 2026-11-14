@@ -20,9 +20,29 @@ enum AppTab: Hashable {
 }
 
 struct RootView: View {
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var player: PlayerEngineHolder
     @State private var tab: AppTab = .home
+    /// A channel opened from a reminder.
+    @State private var reminderPlayback: PlaybackRequest?
 
     var body: some View {
+        tabs
+            // Reminders slide in over every tab; the player shows its own while it's open.
+            .overlay {
+                if !player.isPresentingPlayer {
+                    ReminderBanner { reminder in
+                        reminderPlayback = .liveChannel(reminder.channel, settings: settings)
+                    }
+                }
+            }
+            .task { await ReminderStore.shared.run() }
+            .fullScreenCover(item: $reminderPlayback) { request in
+                PlayerView(request: request).ignoresSafeArea()
+            }
+    }
+
+    private var tabs: some View {
         TabView(selection: $tab) {
             Tab("Home", systemImage: "house", value: AppTab.home) {
                 CatalogView(mode: .home)
