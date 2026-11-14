@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // MARK: - API models
 
@@ -17,6 +18,12 @@ struct TraktDeviceCode: Decodable, Equatable {
     let verificationUrl: String
     let expiresIn: Int
     let interval: Int
+    /// PKCE: the secret half kept on the Apple TV, sent when polling. Not part of Trakt's answer.
+    var codeVerifier = ""
+
+    private enum CodingKeys: String, CodingKey {
+        case deviceCode, userCode, verificationUrl, expiresIn, interval
+    }
 }
 
 struct TraktIDs: Codable, Hashable {
@@ -86,7 +93,8 @@ enum TraktPoll {
 
 // MARK: - Client
 
-/// Trakt's REST API with the user's own app ID and secret.
+/// Trakt's REST API. Apps made since October 2026 have no client secret and sign in with
+/// PKCE; older apps still send their secret.
 struct TraktClient {
     let clientID: String
     let clientSecret: String
@@ -94,9 +102,17 @@ struct TraktClient {
 
     private static let base = "https://api.trakt.tv"
     private static let redirect = "urn:ietf:wg:oauth:2.0:oob"
+    /// Sign-in host. Trakt's newer docs use auth.trakt.tv; the first sign-in tries it and
+    /// falls back to api.trakt.tv, and whichever answered is used from then on.
+    private static let oauthHosts = ["https://auth.trakt.tv", "https://api.trakt.tv"]
+    private static var oauthBase: String {
+        get { UserDefaults.standard.string(forKey: "traktOAuthHost") ?? oauthHosts[0] }
+        set { UserDefaults.standard.set(newValue, forKey: "traktOAuthHost") }
+    }
 
-    private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil) -> URLRequest {
-        var request = URLRequest(url: URL(string: Self.base + path)!)
+    private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil,
+                         base: String = TraktClient.base) -> URLRequest {
+        var request = URLRequest(url: URL(string: base + path)!)
         request.httpMethod = method
         request.timeoutInterval = 25
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -119,14 +135,39 @@ struct TraktClient {
     // Sign-in
 
     func deviceCode() async throws -> TraktDeviceCode {
-        let data = try await URLSession.shared.fetch(request("/oauth/device/code", method: "POST",
-                                                             body: ["client_id": clientID]))
-        return try JSONDecoder.snake.decode(TraktDeviceCode.self, from: data)
+        let verifier = PKCE.verifier()
+        let body: [String: Any] = ["client_id": clientID,
+                                   "code_challenge": PKCE.challenge(for: verifier),
+                                   "code_challenge_method": "S256"]
+        var lastError: Error = URLError(.cannotConnectToHost)
+        // Saved host first, then the other one.
+        let hosts = [Self.oauthBase] + Self.oauthHosts.filter { $0 != Self.oauthBase }
+        for host in hosts {
+            do {
+                let data = try await URLSession.shared.fetch(request("/oauth/device/code", method: "POST",
+                                                                     body: body, base: host))
+                var code = try JSONDecoder.snake.decode(TraktDeviceCode.self, from: data)
+                code.codeVerifier = verifier
+                Self.oauthBase = host
+                return code
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
     }
 
-    func poll(deviceCode: String) async -> TraktPoll {
-        let req = request("/oauth/device/token", method: "POST",
-                          body: ["code": deviceCode, "client_id": clientID, "client_secret": clientSecret])
+    /// Adds the secret only for older apps that have one.
+    private func withSecret(_ body: [String: Any]) -> [String: Any] {
+        var body = body
+        if !clientSecret.isEmpty { body["client_secret"] = clientSecret }
+        return body
+    }
+
+    func poll(_ code: TraktDeviceCode) async -> TraktPoll {
+        var body: [String: Any] = ["code": code.deviceCode, "client_id": clientID]
+        if !code.codeVerifier.isEmpty { body["code_verifier"] = code.codeVerifier }
+        let req = request("/oauth/device/token", method: "POST", body: withSecret(body), base: Self.oauthBase)
         guard let result = try? await URLSession.shared.data(for: req),
               let status = (result.1 as? HTTPURLResponse)?.statusCode else { return .pending }
         let data = result.0
@@ -136,7 +177,7 @@ struct TraktClient {
             return .failed("Trakt sent an answer StreamBox couldn't read.")
         case 400: return .pending
         case 429: return .slowDown
-        case 404: return .failed("Trakt didn't recognise the code. Check the client ID and secret.")
+        case 401, 403, 404: return .failed("Trakt didn't accept this sign-in. Check the Trakt app's client ID.")
         case 409: return .failed("That code was already used. Start again.")
         case 410: return .expired
         case 418: return .denied
@@ -145,10 +186,10 @@ struct TraktClient {
     }
 
     func refresh(_ tokens: TraktTokens) async throws -> TraktTokens {
-        let data = try await URLSession.shared.fetch(request("/oauth/token", method: "POST", body: [
-            "refresh_token": tokens.refreshToken, "client_id": clientID, "client_secret": clientSecret,
+        let data = try await URLSession.shared.fetch(request("/oauth/token", method: "POST", body: withSecret([
+            "refresh_token": tokens.refreshToken, "client_id": clientID,
             "redirect_uri": Self.redirect, "grant_type": "refresh_token",
-        ]))
+        ]), base: Self.oauthBase))
         return try JSONDecoder.snake.decode(TraktTokens.self, from: data)
     }
 
@@ -258,7 +299,22 @@ final class TraktSync: ObservableObject {
         username = UserDefaults.standard.string(forKey: "traktUsername")
     }
 
-    var hasApp: Bool { !clientID.isEmpty && !clientSecret.isEmpty }
+    /// The Client ID built into this copy (GitHub secret TRAKT_CLIENT_ID), if any.
+    static let builtInClientID: String = {
+        let value = (Bundle.main.object(forInfoDictionaryKey: "TraktClientID") as? String ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        return value.hasPrefix("$(") ? "" : value
+    }()
+
+    /// The app in use: your own if you've entered one, otherwise the built-in one.
+    var usingOwnApp: Bool { !clientID.isEmpty }
+    var hasBuiltInApp: Bool { !Self.builtInClientID.isEmpty }
+    private var activeClientID: String { usingOwnApp ? clientID : Self.builtInClientID }
+    private var activeSecret: String { usingOwnApp ? clientSecret : "" }
+    private var api: TraktClient { TraktClient(clientID: activeClientID, clientSecret: activeSecret) }
+
+    /// Only a Client ID is needed: Trakt apps made since October 2026 have no secret.
+    var hasApp: Bool { !activeClientID.isEmpty }
     var isSignedIn: Bool { tokens != nil }
 
     private var prefs: Preferences? { settings?.prefs }
@@ -271,14 +327,14 @@ final class TraktSync: ObservableObject {
     // MARK: Sign-in
 
     func startSignIn() async throws -> TraktDeviceCode {
-        try await TraktClient(clientID: clientID, clientSecret: clientSecret).deviceCode()
+        try await api.deviceCode()
     }
 
     func poll(_ code: TraktDeviceCode) async -> TraktPoll {
-        let result = await TraktClient(clientID: clientID, clientSecret: clientSecret).poll(deviceCode: code.deviceCode)
+        let result = await api.poll(code)
         if case .approved(let tokens) = result {
             store(tokens)
-            username = try? await TraktClient(clientID: clientID, clientSecret: clientSecret,
+            username = try? await TraktClient(clientID: activeClientID, clientSecret: activeSecret,
                                               accessToken: tokens.accessToken).username()
             UserDefaults.standard.set(username, forKey: "traktUsername")
             await sync()
@@ -322,14 +378,14 @@ final class TraktSync: ObservableObject {
     private func client() async -> TraktClient? {
         guard hasApp, var tokens else { return nil }
         if tokens.expiresAt < Date().addingTimeInterval(86_400) {
-            guard let fresh = try? await TraktClient(clientID: clientID, clientSecret: clientSecret).refresh(tokens) else {
+            guard let fresh = try? await api.refresh(tokens) else {
                 lastError = "Trakt sign-in expired. Sign in again."
                 return nil
             }
             store(fresh)
             tokens = fresh
         }
-        return TraktClient(clientID: clientID, clientSecret: clientSecret, accessToken: tokens.accessToken)
+        return TraktClient(clientID: activeClientID, clientSecret: activeSecret, accessToken: tokens.accessToken)
     }
 
     // MARK: Syncing
@@ -471,5 +527,27 @@ final class TraktSync: ObservableObject {
             guard let client = await client() else { return }
             try? await client.scrobble(action, context: context, progress: progress)
         }
+    }
+}
+
+// MARK: - PKCE
+
+/// Proof Key for Code Exchange (S256): a random verifier kept on the Apple TV and its
+/// SHA-256 challenge sent with the sign-in request.
+enum PKCE {
+    private static let characters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+    /// 64 characters from the allowed set (Trakt accepts 43 to 128).
+    static func verifier() -> String {
+        var generator = SystemRandomNumberGenerator()
+        return String((0..<64).map { _ in characters[Int(generator.next(upperBound: UInt(characters.count)))] })
+    }
+
+    /// base64url of SHA-256(verifier), without padding.
+    static func challenge(for verifier: String) -> String {
+        Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
