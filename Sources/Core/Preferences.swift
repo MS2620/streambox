@@ -81,9 +81,20 @@ enum TopShelfExtra: String, Codable, CaseIterable {
 }
 
 enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
-    case frosted, dark
+    case frosted, dark, ocean, sunset, forest, aurora, rose, black
     var id: String { rawValue }
-    var label: String { self == .frosted ? "Frosted" : "Dark" }
+    var label: String {
+        switch self {
+        case .frosted: return "Frosted"
+        case .dark: return "Dark"
+        case .ocean: return "Ocean"
+        case .sunset: return "Sunset"
+        case .forest: return "Forest"
+        case .aurora: return "Aurora"
+        case .rose: return "Rosé"
+        case .black: return "Black"
+        }
+    }
 }
 
 /// A Live TV group the user made from channels in the provider's groups.
