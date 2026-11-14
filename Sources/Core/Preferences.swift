@@ -182,6 +182,8 @@ struct Preferences: Codable, Equatable {
     var traktWatchlist = true
     var traktScrobble = true
     var favouriteChannelIDs: Set<Int> = []
+    /// Live channels played, newest first (up to 20).
+    var recentChannelIDs: [Int] = []
     var lastCategoryID: String?
     var liveLayout: LiveLayout = .guide
     var guideHours = 2
