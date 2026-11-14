@@ -174,6 +174,13 @@ struct TMDBClient {
         return details.seasons.filter { $0.seasonNumber > 0 }
     }
 
+    /// A movie or series by its TMDB id, e.g. one that came from Trakt.
+    func item(_ kind: MediaType, id: Int) async throws -> TMDBItem {
+        var item: TMDBItem = try await get("\(kind.rawValue)/\(id)")
+        item.mediaType = kind.rawValue
+        return item
+    }
+
     func episodes(tvID: Int, season: Int) async throws -> [TVEpisode] {
         let s: TVSeason = try await get("tv/\(tvID)/season/\(season)")
         return s.episodes

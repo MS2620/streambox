@@ -37,6 +37,10 @@ struct RootView: View {
                 }
             }
             .task { await ReminderStore.shared.run() }
+            .task {
+                TraktSync.shared.attach(settings)
+                await TraktSync.shared.run()
+            }
             .fullScreenCover(item: $reminderPlayback) { request in
                 PlayerView(request: request).ignoresSafeArea()
             }

@@ -62,10 +62,13 @@ final class WatchHistory: ObservableObject {
     @Published private(set) var entries: [String: WatchEntry] = [:]
     /// Series marked watched as a whole (their posters get a tick).
     @Published private(set) var watchedSeries: Set<String> = []
+    /// Watched elsewhere, from Trakt, as entry keys ("movie-603", "tv-1399:1:2").
+    @Published private(set) var externalWatched: Set<String> = []
 
     private static let entriesKey = "watchHistory.entries"
     private static let seriesKey = "watchHistory.series"
     private static let dismissedKey = "watchHistory.dismissedNextUp"
+    private static let externalKey = "watchHistory.externalWatched"
     private static let maxEntries = 600
 
     private init() {
@@ -76,6 +79,7 @@ final class WatchHistory: ObservableObject {
         }
         watchedSeries = Set(defaults.stringArray(forKey: Self.seriesKey) ?? [])
         dismissedNextUp = Set(defaults.stringArray(forKey: Self.dismissedKey) ?? [])
+        externalWatched = Set(defaults.stringArray(forKey: Self.externalKey) ?? [])
     }
 
     nonisolated static func key(item: TMDBItem, season: Int?, episode: Int?) -> String {
@@ -93,11 +97,16 @@ final class WatchHistory: ObservableObject {
 
     /// Movie: watched. Series: marked watched as a whole.
     func isWatched(_ item: TMDBItem) -> Bool {
-        item.kind == .movie ? entry(item: item)?.watched == true : watchedSeries.contains(item.uid)
+        if item.kind == .movie {
+            if let entry = entry(item: item) { return entry.watched }
+            return externalWatched.contains(item.uid)
+        }
+        return watchedSeries.contains(item.uid)
     }
 
     func isWatched(_ item: TMDBItem, season: Int, episode: Int) -> Bool {
-        entry(item: item, season: season, episode: episode)?.watched == true
+        if let entry = entry(item: item, season: season, episode: episode) { return entry.watched }
+        return externalWatched.contains(Self.key(item: item, season: season, episode: episode))
     }
 
     /// The most recently played episode of a series.
@@ -126,6 +135,7 @@ final class WatchHistory: ObservableObject {
         var entry = entries[context.key]
             ?? WatchEntry(context: context, position: 0, duration: duration, updated: Date(), watched: false)
         if position / duration >= Self.watchedFraction {
+            if !entry.watched || entry.position > 0 { TraktSync.shared.playbackFinished(context) }
             entry.watched = true
             entry.position = 0
         } else if position >= Self.minimumProgress {
@@ -142,6 +152,7 @@ final class WatchHistory: ObservableObject {
     }
 
     func setWatched(_ watched: Bool, context: WatchContext) {
+        TraktSync.shared.historyChanged([context], watched: watched)
         var entry = entries[context.key]
             ?? WatchEntry(context: context, position: 0, duration: 0, updated: Date(), watched: false)
         entry.watched = watched
@@ -153,6 +164,9 @@ final class WatchHistory: ObservableObject {
 
     /// Marks every listed episode of a season, e.g. from "Mark season watched".
     func setWatched(_ watched: Bool, item: TMDBItem, imdbID: String, episodes: [TVEpisode]) {
+        TraktSync.shared.historyChanged(episodes.map {
+            WatchContext(item: item, imdbID: imdbID, season: $0.seasonNumber, episode: $0.episodeNumber)
+        }, watched: watched)
         for episode in episodes {
             let context = WatchContext(item: item, imdbID: imdbID, season: episode.seasonNumber,
                                        episode: episode.episodeNumber, episodeName: episode.name)
@@ -167,7 +181,23 @@ final class WatchHistory: ObservableObject {
 
     /// Series posters: ticked when marked watched as a whole.
     func setSeriesWatched(_ watched: Bool, item: TMDBItem) {
+        TraktSync.shared.seriesChanged(item, watched: watched)
         if watched { watchedSeries.insert(item.uid) } else { watchedSeries.remove(item.uid) }
+        save()
+    }
+
+    /// Trakt's watched list, replacing the previous one.
+    func setExternalWatched(_ keys: Set<String>) {
+        externalWatched = keys
+        save()
+    }
+
+    /// Progress from Trakt: taken when it's newer than what this Apple TV has.
+    func mergeRemote(_ context: WatchContext, position: Double, duration: Double, updated: Date) {
+        guard duration > 0, position >= Self.minimumProgress, position / duration < Self.watchedFraction else { return }
+        if let existing = entries[context.key], existing.updated >= updated { return }
+        entries[context.key] = WatchEntry(context: context, position: position, duration: duration,
+                                          updated: updated, watched: false)
         save()
     }
 
@@ -196,5 +226,6 @@ final class WatchHistory: ObservableObject {
         }
         defaults.set(Array(watchedSeries), forKey: Self.seriesKey)
         defaults.set(Array(dismissedNextUp), forKey: Self.dismissedKey)
+        defaults.set(Array(externalWatched), forKey: Self.externalKey)
     }
 }

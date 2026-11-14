@@ -175,6 +175,12 @@ struct Preferences: Codable, Equatable {
     var lockedAddonIDs: Set<String> = []
     var hideLockedGroups = false
     var unlockMinutes = 15
+
+    // Trakt (account details are in the Keychain)
+    var traktProgress = true
+    var traktHistory = true
+    var traktWatchlist = true
+    var traktScrobble = true
     var favouriteChannelIDs: Set<Int> = []
     var lastCategoryID: String?
     var liveLayout: LiveLayout = .guide
