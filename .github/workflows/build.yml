@@ -52,6 +52,18 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             DEBUG_INFORMATION_FORMAT=dwarf \
             build
+      
+      # Shows whether the app icon made it into the build. Never fails the build.
+      - name: Check app icon in the build
+        run: |
+          APP=build/Build/Products/Release-appletvos/StreamBox.app
+          echo "--- Info.plist icon keys ---"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP/Info.plist" || echo "No CFBundleIcons in Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :TVTopShelfImage" "$APP/Info.plist" || echo "No TVTopShelfImage in Info.plist"
+          echo "--- Files in the app ---"
+          ls "$APP" | head -50
+          echo "--- Icon assets in Assets.car ---"
+          xcrun --sdk appletvos assetutil --info "$APP/Assets.car" | grep -E '"(Name|AssetType|Idiom)"' | sort | uniq -c | head -60 || echo "No Assets.car"
 
       # Unsigned IPA for sideloading (Sideloadly / atvloadly re-sign it with your Apple ID)
       - name: Package unsigned IPA
