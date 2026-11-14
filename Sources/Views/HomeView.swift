@@ -1085,14 +1085,14 @@ struct ContinueWatchingRow: View {
     }
 
     var body: some View {
-        let cards = cards
+        let list = self.cards
         Group {
-            if cards.isEmpty {
+            if list.isEmpty {
                 Color.clear.frame(height: 1)
             } else {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 40) {
-                        ForEach(cards) { card in
+                        ForEach(list) { card in
                             NavigationLink(value: card.target) {
                                 ContinueCard(card: card)
                                     .padding(.top, RowLayout.titleSpace)
@@ -1121,7 +1121,7 @@ struct ContinueWatchingRow: View {
             }
         }
         .onChange(of: focusedID) { _, id in
-            guard let id, let card = cards.first(where: { $0.id == id }) else { return }
+            guard let id, let card = list.first(where: { $0.id == id }) else { return }
             onFocus(card.hero)
         }
         .task(id: finishedKey) { await loadNextEpisodes() }

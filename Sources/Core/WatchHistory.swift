@@ -55,9 +55,9 @@ final class WatchHistory: ObservableObject {
     static let shared = WatchHistory()
 
     /// Less than this isn't saved: a quick look at a stream isn't "started".
-    static let minimumProgress: Double = 120
+    nonisolated static let minimumProgress: Double = 120
     /// From here on a movie or episode counts as watched.
-    static let watchedFraction: Double = 0.9
+    nonisolated static let watchedFraction: Double = 0.9
 
     @Published private(set) var entries: [String: WatchEntry] = [:]
     /// Series marked watched as a whole (their posters get a tick).
@@ -78,7 +78,7 @@ final class WatchHistory: ObservableObject {
         dismissedNextUp = Set(defaults.stringArray(forKey: Self.dismissedKey) ?? [])
     }
 
-    static func key(item: TMDBItem, season: Int?, episode: Int?) -> String {
+    nonisolated static func key(item: TMDBItem, season: Int?, episode: Int?) -> String {
         guard let season, let episode else { return item.uid }
         return "\(item.uid):\(season):\(episode)"
     }

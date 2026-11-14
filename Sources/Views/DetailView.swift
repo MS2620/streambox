@@ -258,7 +258,8 @@ struct DetailView: View {
         let summary = seasons.first { $0.seasonNumber == season }
         let count = summary?.episodeCount ?? (season == selectedSeason ? episodes.count : 0)
         if episode < count {
-            let known = season == selectedSeason ? episodes.first { $0.episodeNumber == episode + 1 } : nil
+            let known: TVEpisode? = season == selectedSeason
+                ? episodes.first(where: { $0.episodeNumber == episode + 1 }) : nil
             return (season, episode + 1, known?.name, known?.overview, "Play S\(season) E\(episode + 1)")
         }
         if seasons.contains(where: { $0.seasonNumber == season + 1 }) {
