@@ -8,6 +8,8 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+    # Filled by GitHub Actions from the TRAKT_CLIENT_ID secret; empty means "enter your own".
+    TRAKT_CLIENT_ID: ""
 packages:
   AetherEngine:
     url: https://github.com/superuser404notfound/AetherEngine
@@ -30,6 +32,7 @@ targets:
         # Without these the generator writes a fixed "1.0 (1)"
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        TraktClientID: $(TRAKT_CLIENT_ID)
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           # Many IPTV providers only serve plain http

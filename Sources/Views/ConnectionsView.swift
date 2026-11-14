@@ -740,8 +740,6 @@ struct TraktAccountView: View {
     @EnvironmentObject var settings: AppSettings
     @ObservedObject private var trakt = TraktSync.shared
 
-    @State private var editingID = false
-    @State private var editingSecret = false
     @State private var code: TraktDeviceCode?
     @State private var codeStarted = Date()
     @State private var signInMessage: String?
@@ -751,7 +749,7 @@ struct TraktAccountView: View {
         if let error = trakt.lastError { return .problem(error) }
         if trakt.isSignedIn { return .good("Signed in" + (trakt.username.map { " as \($0)" } ?? "")) }
         if code != nil { return .checking("Waiting for you to approve…") }
-        return .off(trakt.hasApp ? "Not signed in" : "Add your Trakt app first")
+        return .off(trakt.hasApp ? "Not signed in" : "Add a Trakt Client ID first")
     }
 
     var body: some View {
@@ -778,40 +776,25 @@ struct TraktAccountView: View {
                             .buttonStyle(PlainPressStyle())
                             .disabled(!trakt.hasApp)
                         }
-                        if let signInMessage { SettingsNote(signInMessage) }
+                        if let signInMessage {
+                            SettingsNote(signInMessage)
+                        } else {
+                            SettingsNote(trakt.hasApp
+                                ? "Sign in with your Trakt account. No Trakt app or keys to set up."
+                                : "This copy of StreamBox has no Trakt app built in. Add your own below to sign in.")
+                        }
                     }
 
-                    GlassPanel("Your Trakt app") {
-                        Button {
-                            editingID = true
-                        } label: {
-                            ListRowLabel(title: "Client ID", icon: "key",
-                                         trailing: trakt.clientID.isEmpty ? "Not set" : "••••" + String(trakt.clientID.suffix(4)))
+                    GlassPanel {
+                        SettingsLinkRow("Use your own Trakt app", icon: "gearshape",
+                                        value: trakt.usingOwnApp ? "Your own" : (trakt.hasBuiltInApp ? "Built in" : "Set up")) {
+                            TraktOwnAppView()
                         }
-                        .buttonStyle(PlainPressStyle())
-                        Button {
-                            editingSecret = true
-                        } label: {
-                            ListRowLabel(title: "Client secret", icon: "lock",
-                                         trailing: trakt.clientSecret.isEmpty ? "Not set" : "••••••")
-                        }
-                        .buttonStyle(PlainPressStyle())
                     }
-                    SettingsNote("Free: on trakt.tv go to Settings › Your API Apps › New Application, give it any name and use urn:ietf:wg:oauth:2.0:oob as the redirect URI. Copy its Client ID and Client Secret here.")
                 }
                 .frame(maxWidth: 1100)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 60)
-            }
-        }
-        .sheet(isPresented: $editingID) {
-            NameSheet(title: "Trakt Client ID", initial: trakt.clientID, placeholder: "Client ID",
-                      autocapitalize: false) { trakt.clientID = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        }
-        .sheet(isPresented: $editingSecret) {
-            NameSheet(title: "Trakt Client Secret", initial: trakt.clientSecret, placeholder: "Client secret",
-                      secure: true, autocapitalize: false) {
-                trakt.clientSecret = $0.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
         .confirmationDialog("Sign out of Trakt?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
@@ -934,6 +917,67 @@ struct TraktAccountView: View {
         if !Task.isCancelled, self.code != nil {
             self.code = nil
             signInMessage = "The code expired. Sign in again."
+        }
+    }
+}
+
+/// Settings › Connections › Trakt › Use your own Trakt app: swaps the built-in Client ID for yours.
+struct TraktOwnAppView: View {
+    @ObservedObject private var trakt = TraktSync.shared
+    @State private var editingID = false
+    @State private var editingSecret = false
+
+    var body: some View {
+        ZStack {
+            AppBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 30) {
+                    Text("Your own Trakt app")
+                        .font(.system(size: 44, weight: .heavy))
+                    GlassPanel {
+                        Button {
+                            editingID = true
+                        } label: {
+                            ListRowLabel(title: "Client ID", icon: "key",
+                                         trailing: trakt.clientID.isEmpty
+                                            ? (trakt.hasBuiltInApp ? "Built in" : "Not set")
+                                            : "••••" + String(trakt.clientID.suffix(4)))
+                        }
+                        .buttonStyle(PlainPressStyle())
+                        Button {
+                            editingSecret = true
+                        } label: {
+                            ListRowLabel(title: "Client secret (older apps only)", icon: "lock",
+                                         trailing: trakt.clientSecret.isEmpty ? "None" : "••••••")
+                        }
+                        .buttonStyle(PlainPressStyle())
+                        .disabled(trakt.clientID.isEmpty)
+                        if trakt.usingOwnApp && trakt.hasBuiltInApp {
+                            Button {
+                                trakt.clientID = ""
+                                trakt.clientSecret = ""
+                            } label: {
+                                ListRowLabel(title: "Go back to the built-in app", icon: "arrow.uturn.backward")
+                            }
+                            .buttonStyle(PlainPressStyle())
+                        }
+                    }
+                    SettingsNote("On trakt.tv go to Settings › Your API Apps › New Application, give it any name and use urn:ietf:wg:oauth:2.0:oob as the redirect URI. New apps only have a Client ID; a secret is only needed for apps made before October 2026. After changing the app, sign in to Trakt again.")
+                }
+                .frame(maxWidth: 1100)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
+            }
+        }
+        .sheet(isPresented: $editingID) {
+            NameSheet(title: "Trakt Client ID", initial: trakt.clientID, placeholder: "Client ID",
+                      autocapitalize: false) { trakt.clientID = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        .sheet(isPresented: $editingSecret) {
+            NameSheet(title: "Trakt Client Secret", initial: trakt.clientSecret, placeholder: "Client secret",
+                      secure: true, autocapitalize: false) {
+                trakt.clientSecret = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
     }
 }
