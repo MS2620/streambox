@@ -41,6 +41,11 @@ struct LiveTVView: View {
     @FocusState private var focusedCell: String?
     @State private var reminderPrompt: ReminderPromptItem?
     @ObservedObject private var reminders = ReminderStore.shared
+    @ObservedObject private var parental = ParentalLock.shared
+    /// A locked group waiting for the PIN.
+    @State private var pendingGroup: GroupEntry?
+    @State private var askingPIN = false
+    @State private var channelsReload = 0
 
     private static let favouritesID = "__favourites"
     private static let folderPrefix = "folder:"
@@ -75,7 +80,9 @@ struct LiveTVView: View {
         }
         list += categories
             .filter { !prefs.hiddenCategoryIDs.contains($0.id) }
-            .map { GroupEntry(id: $0.id, name: $0.name, icon: "folder") }
+            .filter { !(prefs.hideLockedGroups && parental.isLocked(categoryID: $0.id, prefs: prefs)) }
+            .map { GroupEntry(id: $0.id, name: $0.name,
+                              icon: parental.isLocked(categoryID: $0.id, prefs: prefs) ? "lock.fill" : "folder") }
         if !prefs.favouriteChannelIDs.isEmpty {
             let favourites = GroupEntry(id: Self.favouritesID, name: "Favourites", icon: "star")
             if prefs.favouritesFirst {
@@ -109,7 +116,7 @@ struct LiveTVView: View {
     }
 
     private var channelsKey: String {
-        "\(selectedID ?? "")|\(prefs.hiddenChannelIDs.count)|\(prefs.folders.hashValue)|\(prefs.favouriteChannelIDs.count)"
+        "\(channelsReload)|\(selectedID ?? "")|\(prefs.hiddenChannelIDs.count)|\(prefs.folders.hashValue)|\(prefs.favouriteChannelIDs.count)"
     }
 
     private var guideKey: String {
@@ -136,6 +143,16 @@ struct LiveTVView: View {
                     sidebar
                         .frame(width: 400)
                         .focusSection()
+                        .pinPrompt($askingPIN) {
+                            guard let group = pendingGroup else { return }
+                            pendingGroup = nil
+                            if group.id == selectedID {
+                                // Was already selected while locked: reload it now it's open.
+                                channelsReload += 1
+                            } else {
+                                select(group)
+                            }
+                        }
                     Group {
                         if prefs.liveLayout == .guide {
                             guide
@@ -438,7 +455,29 @@ struct LiveTVView: View {
         }
     }
 
+    @ViewBuilder
     private var emptyNote: some View {
+        if selectedIsLocked {
+            VStack(alignment: .leading, spacing: 18) {
+                Label("This group is locked", systemImage: "lock.fill")
+                    .font(.system(size: 30, weight: .bold))
+                Button {
+                    if let group = groups.first(where: { $0.id == selectedID }) {
+                        pendingGroup = group
+                        askingPIN = true
+                    }
+                } label: {
+                    PillLabel(title: "Enter PIN", icon: "key")
+                }
+                .buttonStyle(PlainPressStyle())
+            }
+            .padding(.top, 40)
+        } else {
+            unlockedEmptyNote
+        }
+    }
+
+    private var unlockedEmptyNote: some View {
         Text(selectedID == Self.favouritesID
              ? "No favourites yet. Long-press a channel to add it."
              : (isFolderSelected ? "This folder is empty. Add channels in Settings → Content → My folders, or long-press a channel."
@@ -489,7 +528,18 @@ struct LiveTVView: View {
 
     // MARK: - Actions
 
+    /// The selected group is locked and the PIN hasn't been entered.
+    private var selectedIsLocked: Bool {
+        guard let selectedID else { return false }
+        return parental.isLocked(categoryID: selectedID, prefs: prefs)
+    }
+
     private func select(_ group: GroupEntry) {
+        if parental.isLocked(categoryID: group.id, prefs: prefs) {
+            pendingGroup = group
+            askingPIN = true
+            return
+        }
         guard group.id != selectedID else { return }
         infoChannel = nil
         infoEntry = nil
@@ -558,7 +608,7 @@ struct LiveTVView: View {
     }
 
     private func loadChannels() async {
-        guard let selectedID else {
+        guard let selectedID, !selectedIsLocked else {
             channels = []
             return
         }

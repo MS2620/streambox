@@ -464,6 +464,9 @@ struct StreamListView: View {
 
     /// The quality filter: nil shows everything.
     @State private var filter: StreamQuality?
+    /// Addons skipped because parental controls lock them.
+    @State private var lockedAddons = 0
+    @State private var askingPIN = false
 
     private var counts: [StreamQuality: Int] {
         Dictionary(grouping: results, by: { StreamQuality($0.stream.resolution) }).mapValues(\.count)
@@ -486,6 +489,9 @@ struct StreamListView: View {
                     .frame(width: 620, alignment: .leading)
                 list
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .pinPrompt($askingPIN) {
+                        Task { await search() }
+                    }
             }
             .padding(.horizontal, 90)
             .padding(.top, 70)
@@ -592,6 +598,14 @@ struct StreamListView: View {
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.white.opacity(0.6))
             }
+            if lockedAddons > 0 && !loading {
+                Button {
+                    askingPIN = true
+                } label: {
+                    PillLabel(title: "\(lockedAddons) locked addon\(lockedAddons == 1 ? "" : "s") · Enter PIN", icon: "lock.fill")
+                }
+                .buttonStyle(PlainPressStyle())
+            }
             if !shown.isEmpty {
                 ScrollView {
                     LazyVStack(spacing: 16) {
@@ -614,6 +628,7 @@ struct StreamListView: View {
 
     private func search() async {
         loading = true
+        lockedAddons = settings.addons.filter { ParentalLock.shared.isLocked(addon: $0, prefs: settings.prefs) }.count
         var found: [FoundStream] = []
         var failures: [String] = []
         let type = target.type
@@ -621,7 +636,8 @@ struct StreamListView: View {
 
         await withTaskGroup(of: (String, [StremioStream]?).self) { group in
             for addon in settings.addons {
-                guard let url = URL(string: addon.manifestURL) else { continue }
+                guard let url = URL(string: addon.manifestURL),
+                      !ParentalLock.shared.isLocked(addon: addon, prefs: settings.prefs) else { continue }
                 let name = addon.name
                 group.addTask {
                     let streams = try? await StremioAddonClient(manifestURL: url).streams(type: type, id: id)
