@@ -53,6 +53,7 @@ struct TVSeasonSummary: Decodable, Hashable, Identifiable {
     let id: Int
     let seasonNumber: Int
     let name: String?
+    let episodeCount: Int?
 }
 
 struct TVSeason: Decodable { let episodes: [TVEpisode] }

@@ -13,6 +13,36 @@ struct StreamTarget: Identifiable, Hashable {
     var detail: String? = nil
     var posterURL: URL? = nil
     var backdropURL: URL? = nil
+    /// Saves progress and offers to resume (movies and episodes from TMDB).
+    var watch: WatchContext? = nil
+}
+
+extension StreamTarget {
+    /// An episode of a TMDB series, ready for the stream page (also used by Continue Watching).
+    static func episode(item: TMDBItem, imdbID: String, season: Int, episode: Int,
+                        name: String?, overview: String?) -> StreamTarget {
+        StreamTarget(
+            type: "series",
+            id: "\(imdbID):\(season):\(episode)",
+            title: item.displayTitle,
+            subtitle: "S\(season)E\(episode) · \(name ?? "Episode \(episode)")",
+            overview: overview,
+            kicker: "SEASON \(season) · EPISODE \(episode)",
+            detail: name,
+            posterURL: item.posterURL,
+            backdropURL: item.backdropURL,
+            watch: WatchContext(item: item, imdbID: imdbID, season: season, episode: episode, episodeName: name)
+        )
+    }
+
+    /// A TMDB movie, ready for the stream page.
+    static func movie(item: TMDBItem, imdbID: String) -> StreamTarget {
+        StreamTarget(type: "movie", id: imdbID, title: item.displayTitle,
+                     subtitle: item.year, overview: item.overview,
+                     kicker: "MOVIE", detail: item.year,
+                     posterURL: item.posterURL, backdropURL: item.backdropURL,
+                     watch: WatchContext(item: item, imdbID: imdbID))
+    }
 }
 
 struct DetailView: View {
@@ -25,6 +55,7 @@ struct DetailView: View {
     @State private var loadingEpisodes = false
     @State private var streamTarget: StreamTarget?
     @State private var error: String?
+    @ObservedObject private var history = WatchHistory.shared
 
     private var tmdb: TMDBClient { settings.tmdb }
     private var imdbID: String? { details?.externalIds?.imdbId }
@@ -162,25 +193,78 @@ struct DetailView: View {
     @ViewBuilder
     private var playButton: some View {
         if item.kind == .movie {
+            let entry = history.entry(item: item)
             Button {
                 if let imdbID {
-                    streamTarget = StreamTarget(type: "movie", id: imdbID, title: item.displayTitle,
-                                                subtitle: item.year, overview: item.overview,
-                                                kicker: "MOVIE", detail: item.year,
-                                                posterURL: item.posterURL, backdropURL: item.backdropURL)
+                    streamTarget = .movie(item: item, imdbID: imdbID)
                 }
             } label: {
-                Label("Play", systemImage: "play.fill")
+                if let entry, entry.isResumable {
+                    Label("Resume · \(entry.timeLeftLabel)", systemImage: "play.fill")
+                } else {
+                    Label("Play", systemImage: "play.fill")
+                }
+            }
+            .disabled(imdbID == nil)
+
+            Button {
+                if let imdbID {
+                    history.setWatched(!history.isWatched(item), context: WatchContext(item: item, imdbID: imdbID))
+                }
+            } label: {
+                Label(history.isWatched(item) ? "Watched" : "Mark as watched",
+                      systemImage: history.isWatched(item) ? "checkmark.circle.fill" : "checkmark.circle")
             }
             .disabled(imdbID == nil)
         } else {
+            let next = nextUp
             Button {
-                if let first = episodes.first { play(first) }
+                if let next {
+                    play(season: next.season, episode: next.episode, name: next.name, overview: next.overview)
+                } else if let first = episodes.first {
+                    play(first)
+                }
             } label: {
-                Label("Play S\(selectedSeason) E1", systemImage: "play.fill")
+                Label(next?.label ?? "Play S\(selectedSeason) E1", systemImage: "play.fill")
+            }
+            .disabled(imdbID == nil || (next == nil && episodes.isEmpty))
+
+            Button {
+                guard let imdbID, !episodes.isEmpty else { return }
+                history.setWatched(!seasonWatched, item: item, imdbID: imdbID, episodes: episodes)
+            } label: {
+                Label(seasonWatched ? "Season watched" : "Mark season watched",
+                      systemImage: seasonWatched ? "checkmark.circle.fill" : "checkmark.circle")
             }
             .disabled(imdbID == nil || episodes.isEmpty)
         }
+    }
+
+    /// Every episode of the selected season is watched.
+    private var seasonWatched: Bool {
+        !episodes.isEmpty && episodes.allSatisfy { history.isWatched(item, season: $0.seasonNumber, episode: $0.episodeNumber) }
+    }
+
+    /// The episode the Play button starts: the one in progress, or the one after the last watched.
+    private var nextUp: (season: Int, episode: Int, name: String?, overview: String?, label: String)? {
+        guard let latest = history.latestEpisode(of: item),
+              let season = latest.context.season, let episode = latest.context.episode else { return nil }
+        if latest.isResumable {
+            return (season, episode, latest.context.episodeName, nil,
+                    "Resume S\(season) E\(episode) · \(latest.timeLeftLabel)")
+        }
+        guard latest.watched else { return nil }
+        // The next episode in the same season if it has one, otherwise the next season's first.
+        let summary = seasons.first { $0.seasonNumber == season }
+        let count = summary?.episodeCount ?? (season == selectedSeason ? episodes.count : 0)
+        if episode < count {
+            let known = season == selectedSeason ? episodes.first { $0.episodeNumber == episode + 1 } : nil
+            return (season, episode + 1, known?.name, known?.overview, "Play S\(season) E\(episode + 1)")
+        }
+        if seasons.contains(where: { $0.seasonNumber == season + 1 }) {
+            return (season + 1, 1, nil, nil, "Play S\(season + 1) E1")
+        }
+        return nil
     }
 
     private var seasonPicker: some View {
@@ -222,15 +306,25 @@ struct DetailView: View {
                     .padding(.horizontal, 90)
             } else {
                 ScrollView(.horizontal) {
-                    LazyHStack(alignment: .top, spacing: 44) {
+                    LazyHStack(alignment: .top, spacing: 30) {
                         ForEach(episodes) { episode in
+                            let watched = history.isWatched(item, season: episode.seasonNumber,
+                                                            episode: episode.episodeNumber)
                             Button {
                                 play(episode)
                             } label: {
-                                EpisodeCard(episode: episode, fallbackImage: item.backdropURL)
+                                EpisodeCard(episode: episode, fallbackImage: item.backdropURL,
+                                            entry: history.entry(item: item, season: episode.seasonNumber,
+                                                                 episode: episode.episodeNumber))
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(PlainPressStyle())
                             .disabled(imdbID == nil)
+                            .contextMenu {
+                                Button(watched ? "Mark as unwatched" : "Mark as watched") {
+                                    guard let imdbID else { return }
+                                    history.setWatched(!watched, context: context(for: episode, imdbID: imdbID))
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, 90)
@@ -244,18 +338,18 @@ struct DetailView: View {
     // MARK: - Actions
 
     private func play(_ episode: TVEpisode) {
+        play(season: episode.seasonNumber, episode: episode.episodeNumber, name: episode.name, overview: episode.overview)
+    }
+
+    private func play(season: Int, episode: Int, name: String?, overview: String?) {
         guard let imdbID else { return }
-        streamTarget = StreamTarget(
-            type: "series",
-            id: "\(imdbID):\(episode.seasonNumber):\(episode.episodeNumber)",
-            title: item.displayTitle,
-            subtitle: "S\(episode.seasonNumber)E\(episode.episodeNumber) · \(episode.name ?? "Episode \(episode.episodeNumber)")",
-            overview: episode.overview,
-            kicker: "SEASON \(episode.seasonNumber) · EPISODE \(episode.episodeNumber)",
-            detail: episode.name,
-            posterURL: item.posterURL,
-            backdropURL: item.backdropURL
-        )
+        streamTarget = StreamTarget.episode(item: item, imdbID: imdbID, season: season, episode: episode,
+                                            name: name, overview: overview)
+    }
+
+    private func context(for episode: TVEpisode, imdbID: String) -> WatchContext {
+        WatchContext(item: item, imdbID: imdbID, season: episode.seasonNumber,
+                     episode: episode.episodeNumber, episodeName: episode.name)
     }
 
     private func toggleMyList() {
@@ -290,13 +384,29 @@ struct DetailView: View {
     }
 }
 
-/// A 16:9 episode thumbnail with its number, title, runtime and synopsis.
+/// An episode as a card: thumbnail, title, time left or runtime, and a one-line synopsis.
+/// Every card is the same size; the focused one turns white and lifts.
 private struct EpisodeCard: View {
     let episode: TVEpisode
     let fallbackImage: URL?
+    let entry: WatchEntry?
+    @Environment(\.isFocused) private var isFocused
+
+    private static let width: CGFloat = 400
+    private var watched: Bool { entry?.watched == true }
+    private var inProgress: WatchEntry? { entry.flatMap { $0.isResumable ? $0 : nil } }
+
+    private var meta: String {
+        if let inProgress { return inProgress.timeLeftLabel }
+        if watched { return "Watched" }
+        var parts: [String] = []
+        if let runtime = episode.runtime, runtime > 0 { parts.append("\(runtime)m") }
+        if let airDate = episode.airDate, !airDate.isEmpty { parts.append(airDate) }
+        return parts.joined(separator: " · ")
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             AsyncImage(url: episode.stillURL ?? fallbackImage) { image in
                 image.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
@@ -305,28 +415,40 @@ private struct EpisodeCard: View {
                     Image(systemName: "play.rectangle").font(.largeTitle)
                 }
             }
-            .frame(width: 440, height: 248)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .frame(width: Self.width, height: Self.width * 9 / 16)
+            .clipped()
+            .opacity(watched && !isFocused ? 0.55 : 1)
+            .overlay(alignment: .topTrailing) {
+                if watched { WatchedTick().padding(12) }
+            }
+            .overlay(alignment: .bottom) {
+                if let inProgress { ProgressStrip(fraction: inProgress.fraction).padding(14) }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             Text("E\(episode.episodeNumber) · \(episode.name ?? "Episode \(episode.episodeNumber)")")
-                .font(.callout).bold()
+                .font(.system(size: 24, weight: .heavy))
                 .lineLimit(1)
-
-            HStack(spacing: 12) {
-                if let runtime = episode.runtime, runtime > 0 { Text("\(runtime)m") }
-                if let airDate = episode.airDate, !airDate.isEmpty { Text(airDate) }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            if let overview = episode.overview, !overview.isEmpty {
-                Text(overview)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
+                .padding(.top, 4)
+            Text(meta)
+                .font(.system(size: 19, weight: .semibold))
+                .opacity(0.65)
+                .lineLimit(1)
+            Text(episode.overview ?? " ")
+                .font(.system(size: 19))
+                .opacity(0.65)
+                .lineLimit(1)
         }
-        .frame(width: 440, alignment: .leading)
+        .foregroundStyle(isFocused ? Theme.ink : Color.white)
+        .frame(width: Self.width, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 18)
+        .background(RoundedRectangle(cornerRadius: 26, style: .continuous)
+            .fill(isFocused ? Color.white : Color.white.opacity(0.10)))
+        .scaleEffect(isFocused ? 1.06 : 1)
+        .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 20, y: 12)
+        .animation(.easeOut(duration: 0.15), value: isFocused)
     }
 }
 
@@ -555,7 +677,8 @@ struct StreamListView: View {
     private func play(_ result: FoundStream) async {
         guard let url = result.stream.playableURL else { return }
         playback = PlaybackRequest(url: url, title: target.title, subtitle: target.subtitle,
-                                   overview: target.overview, sourceName: result.addonName)
+                                   overview: target.overview, sourceName: result.addonName,
+                                   watch: target.watch)
     }
 }
 

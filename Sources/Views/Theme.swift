@@ -332,3 +332,33 @@ struct FlowLayout: Layout {
         }
     }
 }
+
+/// The white tick on watched posters and episodes.
+struct WatchedTick: View {
+    var size: CGFloat = 40
+
+    var body: some View {
+        Image(systemName: "checkmark")
+            .font(.system(size: size * 0.5, weight: .heavy))
+            .foregroundStyle(Theme.ink)
+            .frame(width: size, height: size)
+            .background(Circle().fill(Color.white))
+            .shadow(color: .black.opacity(0.4), radius: 4, y: 2)
+    }
+}
+
+/// How far into a movie or episode playback got, along the bottom of its artwork.
+struct ProgressStrip: View {
+    let fraction: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.3))
+                Capsule().fill(Color.white)
+                    .frame(width: geo.size.width * min(max(fraction, 0), 1))
+            }
+        }
+        .frame(height: 7)
+    }
+}

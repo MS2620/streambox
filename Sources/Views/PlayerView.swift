@@ -24,6 +24,8 @@ struct PlaybackRequest: Identifiable {
     var isLive: Bool = false
     var httpHeaders: [String: String] = [:]
     var live: LiveContext? = nil
+    /// Movie or episode being watched: saves progress, offers to resume, finds addon subtitles.
+    var watch: WatchContext? = nil
 }
 
 /// Full-screen player for live TV, movies and series, built on AetherEngine.
@@ -83,6 +85,8 @@ private struct PanelOption: Identifiable {
     let title: String
     var detail: String? = nil
     var selected = false
+    /// A section heading in the list, not a choice.
+    var isHeader = false
     let action: () -> Void
 }
 
@@ -110,6 +114,14 @@ private struct AetherPlaybackView: View {
     @FocusState private var focusedOption: String?
     @FocusState private var rootFocused: Bool
     @FocusState private var statsFocused: Bool
+    @FocusState private var resumeFocused: ResumeChoice?
+
+    // Resume and progress.
+    @State private var resumeOffer: Double?
+    @State private var loadRequest: LoadRequest?
+    // Subtitles from the user's addons; nil until the panel first asks.
+    @State private var addonSubtitles: [AddonSubtitle]?
+    @State private var activeAddonSubtitle: String?
 
     // Live retune guard (see AetherEngine's Examples/LiveHost).
     @State private var retuneInFlight = false
@@ -172,7 +184,7 @@ private struct AetherPlaybackView: View {
 
             // Catches the remote while the buttons are hidden. It is a sibling of the
             // controls (not their parent), so it never steals focus navigation from them.
-            if mode != .controls && panel == nil {
+            if mode != .controls && panel == nil && resumeOffer == nil {
                 Color.clear
                     .contentShape(Rectangle())
                     .focusable()
@@ -184,7 +196,7 @@ private struct AetherPlaybackView: View {
                     .ignoresSafeArea()
             }
 
-            if errorMessage == nil && (!engine.hasFirstFrameReadyForDisplay || engine.isBuffering) {
+            if resumeOffer == nil && errorMessage == nil && (!engine.hasFirstFrameReadyForDisplay || engine.isBuffering) {
                 ProgressView().scaleEffect(1.5)
             }
 
@@ -192,8 +204,12 @@ private struct AetherPlaybackView: View {
                 errorBox(errorMessage)
             }
 
-            if mode != .hidden && panel == nil {
+            if mode != .hidden && panel == nil && resumeOffer == nil {
                 overlay.transition(.opacity)
+            }
+
+            if let resumeOffer {
+                resumeCard(resumeOffer)
             }
 
             if let panel {
@@ -214,16 +230,25 @@ private struct AetherPlaybackView: View {
         }
         .onPlayPauseCommand { togglePause() }
         .onExitCommand { handleExit() }
-        .task(id: current.id) { await load() }
+        .task(id: current.id) { prepare() }
+        .task(id: loadRequest) {
+            guard let loadRequest else { return }
+            await load(start: loadRequest.start)
+        }
+        .task(id: loadRequest) { await progressLoop() }
         .task(id: current.live?.channel.id) { await epgLoop() }
         .onAppear { showControls() }
         .onDisappear {
             hideTask?.cancel()
             toastTask?.cancel()
+            saveProgress()
             engine.stop()
         }
         .onChange(of: engine.state) { _, state in
-            if state == .ended { dismiss() }
+            if state == .ended {
+                if let watch = current.watch { WatchHistory.shared.setWatched(true, context: watch) }
+                dismiss()
+            }
         }
         .onChange(of: focusedControl) { _, _ in scheduleHide() }
         .onReceive(engine.liveSourceReset.receive(on: DispatchQueue.main)) { _ in
@@ -500,20 +525,30 @@ private struct AetherPlaybackView: View {
                     ScrollView {
                         LazyVStack(spacing: 6) {
                             ForEach(options) { option in
-                                Button {
-                                    option.action()
-                                } label: {
-                                    PanelRow(option: option)
+                                if option.isHeader {
+                                    Text(option.title)
+                                        .font(.system(size: 18, weight: .bold))
+                                        .foregroundStyle(.white.opacity(0.6))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 8)
+                                        .padding(.top, 14)
+                                        .id(option.id)
+                                } else {
+                                    Button {
+                                        option.action()
+                                    } label: {
+                                        PanelRow(option: option)
+                                    }
+                                    .buttonStyle(BareButtonStyle())
+                                    .focused($focusedOption, equals: option.id)
+                                    .id(option.id)
                                 }
-                                .buttonStyle(BareButtonStyle())
-                                .focused($focusedOption, equals: option.id)
-                                .id(option.id)
                             }
                         }
                         .padding(.vertical, 10)
                     }
                     .onAppear {
-                        let target = options.first(where: \.selected)?.id ?? options.first?.id
+                        let target = options.first(where: \.selected)?.id ?? options.first(where: { !$0.isHeader })?.id
                         if let target {
                             proxy.scrollTo(target, anchor: .center)
                             Task { @MainActor in
@@ -537,16 +572,46 @@ private struct AetherPlaybackView: View {
         case .stats:
             return []
         case .subtitles:
-            var options = [PanelOption(id: "off", title: "Off", selected: engine.activeSubtitleTrackIndex == nil) {
+            var options = [PanelOption(id: "off", title: "Off",
+                                       selected: engine.activeSubtitleTrackIndex == nil && activeAddonSubtitle == nil) {
                 engine.clearSubtitle()
+                activeAddonSubtitle = nil
                 closePanel()
             }]
+            if !engine.subtitleTracks.isEmpty {
+                options.append(PanelOption(id: "h-video", title: "IN THIS VIDEO", isHeader: true) {})
+            }
             options += engine.subtitleTracks.map { track in
                 PanelOption(id: "sub-\(track.id)", title: Self.trackTitle(track),
                             detail: track.isForced ? "Forced" : (track.isHearingImpaired ? "SDH" : nil),
-                            selected: track.id == engine.activeSubtitleTrackIndex) {
+                            selected: activeAddonSubtitle == nil && track.id == engine.activeSubtitleTrackIndex) {
+                    activeAddonSubtitle = nil
                     engine.selectSubtitleTrack(index: track.id)
                     closePanel()
+                }
+            }
+            if current.watch != nil && !settings.addons.isEmpty {
+                let subtitles = addonSubtitles ?? []
+                let names = Array(Set(subtitles.map(\.addonName))).sorted()
+                let heading = names.isEmpty ? "FROM ADDONS" : "FROM ADDONS · " + names.joined(separator: ", ").uppercased()
+                options.append(PanelOption(id: "h-addons", title: heading, isHeader: true) {})
+                if addonSubtitles == nil {
+                    options.append(PanelOption(id: "h-loading", title: "Looking for subtitles…", isHeader: true) {})
+                } else if subtitles.isEmpty {
+                    options.append(PanelOption(id: "h-none", title: "None found. Add a subtitles addon such as OpenSubtitles v3 in Settings › Connections.", isHeader: true) {})
+                }
+                // Several files per language: number them so they can be told apart.
+                var counts: [String: Int] = [:]
+                for subtitle in subtitles {
+                    counts[subtitle.languageName, default: 0] += 1
+                    let number = counts[subtitle.languageName] ?? 1
+                    options.append(PanelOption(id: "addon-\(subtitle.id)", title: subtitle.languageName,
+                                               detail: "\(subtitle.addonName) · #\(number)",
+                                               selected: activeAddonSubtitle == subtitle.id) {
+                        activeAddonSubtitle = subtitle.id
+                        engine.selectSidecarSubtitle(url: subtitle.url)
+                        closePanel()
+                    })
                 }
             }
             return options
@@ -607,7 +672,43 @@ private struct AetherPlaybackView: View {
 
     // MARK: - Loading
 
-    private func load() async {
+    /// Before loading a started movie or episode, asks whether to resume.
+    private func prepare() {
+        addonSubtitles = nil
+        activeAddonSubtitle = nil
+        if !current.isLive, let watch = current.watch,
+           let entry = WatchHistory.shared.entry(for: watch), entry.isResumable {
+            resumeOffer = entry.position
+            loadRequest = nil
+        } else {
+            resumeOffer = nil
+            loadRequest = LoadRequest(start: nil)
+        }
+    }
+
+    private func chooseStart(_ start: Double?) {
+        resumeOffer = nil
+        loadRequest = LoadRequest(start: start)
+        showControls()
+    }
+
+    /// Saves progress every 15 seconds while a movie or episode plays.
+    private func progressLoop() async {
+        guard current.watch != nil, !current.isLive else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            saveProgress()
+        }
+    }
+
+    private func saveProgress() {
+        guard let watch = current.watch, !current.isLive, loadRequest != nil,
+              engine.duration > 0, engine.hasFirstFrameReadyForDisplay else { return }
+        WatchHistory.shared.record(watch, position: clock.currentTime, duration: engine.duration)
+    }
+
+    private func load(start: Double? = nil) async {
         loadError = nil
         let prefs = settings.prefs
         var shaping = AudioShaping()
@@ -654,7 +755,7 @@ private struct AetherPlaybackView: View {
         do {
             // The Live TV guide preview plays muted on the same engine.
             engine.volume = 1
-            _ = try await engine.load(url: current.url, options: options)
+            _ = try await engine.load(url: current.url, startPosition: start, options: options)
             engine.videoGravity = fillScreen ? .resizeAspectFill : .resizeAspect
         } catch is CancellationError {
             // A newer load or a stop replaced this one; not a failure.
@@ -704,7 +805,9 @@ private struct AetherPlaybackView: View {
     }
 
     private func handleExit() {
-        if panel != nil {
+        if resumeOffer != nil {
+            dismiss()
+        } else if panel != nil {
             closePanel()
         } else if mode != .hidden {
             hide()
@@ -748,8 +851,22 @@ private struct AetherPlaybackView: View {
     }
 
     private func open(_ newPanel: Panel) {
+        if newPanel == .subtitles { loadAddonSubtitles() }
         hideTask?.cancel()
         withAnimation(.easeOut(duration: 0.2)) { panel = newPanel }
+    }
+
+    private func loadAddonSubtitles() {
+        guard addonSubtitles == nil, let watch = current.watch, !settings.addons.isEmpty else { return }
+        let addons = settings.addons
+        let language = prefs.subtitleLanguage
+        let requestID = current.id
+        Task {
+            let found = await StremioAddonClient.subtitles(from: addons, type: watch.stremioType,
+                                                          id: watch.stremioID, preferredLanguage: language)
+            guard current.id == requestID else { return }
+            addonSubtitles = found
+        }
     }
 
     private func closePanel() {
@@ -802,7 +919,7 @@ private struct AetherPlaybackView: View {
         var copy = current
         copy = PlaybackRequest(url: copy.url, title: copy.title, subtitle: copy.subtitle, overview: copy.overview,
                                artworkURL: copy.artworkURL, sourceName: copy.sourceName, isLive: copy.isLive,
-                               httpHeaders: copy.httpHeaders, live: copy.live)
+                               httpHeaders: copy.httpHeaders, live: copy.live, watch: copy.watch)
         retuneCount = 0
         current = copy
     }
@@ -892,6 +1009,71 @@ private struct AetherPlaybackView: View {
         let total = Int(seconds)
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+}
+
+// MARK: - Resume
+
+private enum ResumeChoice: Hashable { case resume, restart }
+
+private struct LoadRequest: Equatable {
+    let id = UUID()
+    let start: Double?
+}
+
+extension AetherPlaybackView {
+    /// "Resume from 21:14" or "Start from the beginning", shown before a started title loads.
+    func resumeCard(_ position: Double) -> some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text((current.title ?? "") + (current.subtitle.map { " · " + $0 } ?? ""))
+                .font(.system(size: 30, weight: .bold))
+                .lineLimit(1)
+            HStack(spacing: 18) {
+                Button {
+                    chooseStart(position)
+                } label: {
+                    ResumeButtonLabel(title: "Resume from \(Self.duration(position))")
+                }
+                .buttonStyle(BareButtonStyle())
+                .focused($resumeFocused, equals: .resume)
+
+                Button {
+                    chooseStart(nil)
+                } label: {
+                    ResumeButtonLabel(title: "Start from the beginning")
+                }
+                .buttonStyle(BareButtonStyle())
+                .focused($resumeFocused, equals: .restart)
+            }
+        }
+        .padding(.horizontal, 44)
+        .padding(.vertical, 36)
+        .frame(width: 900, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 30, style: .continuous)
+            .fill(Color(red: 30 / 255, green: 32 / 255, blue: 38 / 255).opacity(0.94)))
+        .onAppear {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(80))
+                resumeFocused = .resume
+            }
+        }
+    }
+}
+
+private struct ResumeButtonLabel: View {
+    let title: String
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 26, weight: .bold))
+            .foregroundStyle(isFocused ? Color.black : Color.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isFocused ? Color.white : Color.white.opacity(0.14)))
+            .scaleEffect(isFocused ? 1.04 : 1)
+            .animation(.easeOut(duration: 0.15), value: isFocused)
     }
 }
 

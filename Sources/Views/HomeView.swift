@@ -140,6 +140,9 @@ struct CatalogView: View {
             .navigationDestination(for: Fixture.self) { fixture in
                 FixtureDetailView(fixture: fixture)
             }
+            .navigationDestination(for: StreamTarget.self) { target in
+                StreamListView(target: target)
+            }
             .navigationDestination(for: XtreamSeries.self) { series in
                 ProviderSeriesView(series: series)
             }
@@ -160,6 +163,8 @@ struct CatalogView: View {
     private var rows: some View {
         switch mode {
         case .home:
+            ContinueWatchingRow(onFocus: focus(in: "home:continue"))
+                .id("home:continue")
             ForEach(settings.visibleHomeRows) { row in
                 homeRow(row)
                     .id("home:" + row.rawValue)
@@ -238,6 +243,10 @@ struct CatalogView: View {
         var sections: [CatalogSection] = []
         switch mode {
         case .home:
+            if let entry = WatchHistory.shared.latestPerTitle.first(where: \.isResumable) {
+                pending = ContinueWatchingRow.hero(for: entry)
+                return
+            }
             for row in settings.visibleHomeRows {
                 if row == .myList, let first = myListItems(nil).first {
                     pending = HeroContent(item: first, row: "My List")
@@ -484,6 +493,7 @@ struct RailView: View {
                         }
                         .buttonStyle(PlainPressStyle())
                         .focused($focusedID, equals: item.uid)
+                        .contextMenu { WatchedMenuItems(item: item) }
                     }
                 }
                 .padding(.horizontal, inset)
@@ -501,11 +511,38 @@ struct RailView: View {
     }
 }
 
+/// Long-press menu for a poster: mark a movie or a whole series watched or unwatched.
+struct WatchedMenuItems: View {
+    let item: TMDBItem
+    @ObservedObject private var history = WatchHistory.shared
+
+    var body: some View {
+        let watched = history.isWatched(item)
+        Button(watched ? "Mark as unwatched" : "Mark as watched") {
+            if item.kind == .movie {
+                // The IMDb id is filled in properly the next time the movie is played.
+                let context = history.entry(item: item)?.context ?? WatchContext(item: item, imdbID: "")
+                history.setWatched(!watched, context: context)
+            } else {
+                history.setSeriesWatched(!watched, item: item)
+            }
+        }
+    }
+}
+
 /// Poster artwork only.
 struct PosterCard: View {
     let item: TMDBItem
+    @ObservedObject private var history = WatchHistory.shared
 
     var body: some View {
+        poster
+            .overlay(alignment: .topTrailing) {
+                if history.isWatched(item) { WatchedTick(size: 36).padding(12) }
+            }
+    }
+
+    private var poster: some View {
         AsyncImage(url: item.posterURL) { image in
             image.resizable().aspectRatio(contentMode: .fill)
         } placeholder: {
@@ -956,5 +993,212 @@ struct ProviderSeriesView: View {
             sourceName: "Provider",
             httpHeaders: client.requestHeaders
         )
+    }
+}
+
+
+// MARK: - Continue Watching
+
+/// Movies and episodes in progress, and the next episode of series being followed. First row on Home.
+struct ContinueWatchingRow: View {
+    @EnvironmentObject var settings: AppSettings
+    @ObservedObject private var history = WatchHistory.shared
+    let onFocus: (HeroContent) -> Void
+
+    @State private var nextEpisodes: [String: NextEpisode] = [:]
+    @FocusState private var focusedID: String?
+
+    struct NextEpisode: Hashable {
+        let season: Int
+        let episode: Int
+        let name: String?
+        let overview: String?
+        let stillURL: URL?
+        let isNew: Bool
+    }
+
+    struct Card: Identifiable {
+        let id: String
+        let entry: WatchEntry
+        let target: StreamTarget
+        let line: String
+        let fraction: Double?
+        let badge: String?
+        let imageURL: URL?
+        let hero: HeroContent
+    }
+
+    private var cards: [Card] {
+        history.latestPerTitle.prefix(30).compactMap { entry -> Card? in
+            let item = entry.item
+            let imdbID = entry.context.imdbID
+            guard !imdbID.isEmpty else { return nil }
+            if entry.isResumable {
+                let target: StreamTarget
+                if let season = entry.context.season, let episode = entry.context.episode {
+                    target = .episode(item: item, imdbID: imdbID, season: season, episode: episode,
+                                      name: entry.context.episodeName, overview: nil)
+                } else {
+                    target = .movie(item: item, imdbID: imdbID)
+                }
+                let line = [entry.episodeLabel, entry.timeLeftLabel].compactMap { $0 }.joined(separator: " · ")
+                return Card(id: entry.id, entry: entry, target: target, line: line, fraction: entry.fraction,
+                            badge: nil, imageURL: item.backdropURL, hero: Self.hero(for: entry))
+            }
+            // A finished episode: offer the next one, once it has aired.
+            guard entry.watched, entry.context.season != nil,
+                  !history.dismissedNextUp.contains(item.uid),
+                  let next = nextEpisodes[entry.id] else { return nil }
+            let target = StreamTarget.episode(item: item, imdbID: imdbID, season: next.season, episode: next.episode,
+                                              name: next.name, overview: next.overview)
+            let hero = HeroContent(key: "continue|\(item.uid)|next",
+                                   kicker: "CONTINUE WATCHING · UP NEXT",
+                                   title: item.displayTitle,
+                                   chips: ["S\(next.season) · E\(next.episode)"] + [next.name].compactMap { $0 },
+                                   overview: next.overview ?? item.overview ?? "",
+                                   imageURL: item.backdropURL)
+            return Card(id: "next-\(item.uid)", entry: entry, target: target,
+                        line: "Next: S\(next.season) · E\(next.episode)", fraction: nil,
+                        badge: next.isNew ? "NEW EPISODE" : "UP NEXT",
+                        imageURL: next.stillURL ?? item.backdropURL, hero: hero)
+        }
+        .prefix(20)
+        .map { $0 }
+    }
+
+    static func hero(for entry: WatchEntry) -> HeroContent {
+        var chips = [entry.episodeLabel, entry.timeLeftLabel].compactMap { $0 }
+        if let name = entry.context.episodeName { chips.append(name) }
+        return HeroContent(key: "continue|\(entry.id)",
+                           kicker: "CONTINUE WATCHING",
+                           title: entry.item.displayTitle,
+                           chips: chips,
+                           overview: entry.item.overview ?? "",
+                           imageURL: entry.item.backdropURL)
+    }
+
+    /// The finished episodes whose next episode needs looking up.
+    private var finishedKey: String {
+        history.latestPerTitle.prefix(30)
+            .filter { $0.watched && $0.context.season != nil }
+            .map(\.id).joined(separator: ",")
+    }
+
+    var body: some View {
+        let cards = cards
+        Group {
+            if cards.isEmpty {
+                Color.clear.frame(height: 1)
+            } else {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 40) {
+                        ForEach(cards) { card in
+                            NavigationLink(value: card.target) {
+                                ContinueCard(card: card)
+                                    .padding(.top, RowLayout.titleSpace)
+                            }
+                            .buttonStyle(PlainPressStyle())
+                            .focused($focusedID, equals: card.id)
+                            .contextMenu {
+                                if card.fraction != nil {
+                                    Button("Mark as watched") {
+                                        history.setWatched(true, context: card.entry.context)
+                                    }
+                                }
+                                Button("Remove from Continue Watching", role: .destructive) {
+                                    history.remove(card.entry.item)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 90)
+                    .padding(.bottom, 30)
+                }
+                .scrollClipDisabled()
+                .overlay(alignment: .topLeading) {
+                    RowTitle(text: "Continue Watching", inset: 90)
+                }
+            }
+        }
+        .onChange(of: focusedID) { _, id in
+            guard let id, let card = cards.first(where: { $0.id == id }) else { return }
+            onFocus(card.hero)
+        }
+        .task(id: finishedKey) { await loadNextEpisodes() }
+    }
+
+    /// Looks up the episode after each finished one: the rest of its season, then the next season's first.
+    private func loadNextEpisodes() async {
+        let finished = history.latestPerTitle.prefix(30).filter { $0.watched && $0.context.season != nil }
+        guard !finished.isEmpty, !settings.tmdbToken.isEmpty else { return }
+        let tmdb = settings.tmdb
+        var found: [String: NextEpisode] = [:]
+        let today = Self.dayFormatter.string(from: Date())
+        let fortnightAgo = Self.dayFormatter.string(from: Date().addingTimeInterval(-14 * 86_400))
+        for entry in finished.prefix(12) {
+            guard let season = entry.context.season, let episode = entry.context.episode else { continue }
+            func aired(_ ep: TVEpisode) -> Bool { (ep.airDate ?? "9999") <= today && !(ep.airDate ?? "").isEmpty }
+            let thisSeason: [TVEpisode] = (try? await tmdb.episodes(tvID: entry.item.id, season: season)) ?? []
+            var upcoming: TVEpisode? = thisSeason.first { $0.episodeNumber == episode + 1 }
+            if upcoming == nil {
+                let nextSeason: [TVEpisode] = (try? await tmdb.episodes(tvID: entry.item.id, season: season + 1)) ?? []
+                upcoming = nextSeason.first { $0.episodeNumber == 1 }
+            }
+            guard let found1 = upcoming, aired(found1) else { continue }
+            found[entry.id] = NextEpisode(season: found1.seasonNumber, episode: found1.episodeNumber,
+                                          name: found1.name, overview: found1.overview, stillURL: found1.stillURL,
+                                          isNew: (found1.airDate ?? "") >= fortnightAgo)
+        }
+        nextEpisodes = found
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+}
+
+/// A wide card with a progress bar (or "UP NEXT"), the title and what's left.
+private struct ContinueCard: View {
+    let card: ContinueWatchingRow.Card
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            FocusFrame(cornerRadius: 20) {
+                AsyncImage(url: card.imageURL) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    ZStack {
+                        Color.gray.opacity(0.3)
+                        Text(card.entry.item.displayTitle).font(.caption).padding()
+                    }
+                }
+                .frame(width: 440, height: 248)
+                .clipped()
+                .overlay(alignment: .bottomLeading) {
+                    if let fraction = card.fraction {
+                        ProgressStrip(fraction: fraction).padding(16)
+                    } else if let badge = card.badge {
+                        Text(badge)
+                            .font(.system(size: 17, weight: .bold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.black.opacity(0.6)))
+                            .padding(16)
+                    }
+                }
+            }
+            Text(card.entry.item.displayTitle)
+                .font(.system(size: 24, weight: .bold))
+                .lineLimit(1)
+                .frame(width: 440, alignment: .leading)
+            Text(card.line)
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(.white.opacity(0.65))
+                .lineLimit(1)
+                .frame(width: 440, alignment: .leading)
+        }
     }
 }

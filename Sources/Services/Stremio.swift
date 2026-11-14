@@ -60,6 +60,26 @@ struct StremioStream: Decodable, Hashable {
 
 private struct StreamResponse: Decodable { let streams: [StremioStream] }
 
+/// A subtitle file from a Stremio subtitles addon (e.g. OpenSubtitles v3).
+struct StremioSubtitle: Decodable, Hashable {
+    let id: String?
+    let url: String
+    /// Usually ISO 639-2, e.g. "eng", "por".
+    let lang: String?
+}
+
+private struct SubtitlesResponse: Decodable { let subtitles: [StremioSubtitle]? }
+
+/// A subtitle offered by one of the user's addons, for the player's Subtitles panel.
+struct AddonSubtitle: Identifiable, Hashable {
+    let id: String
+    let addonName: String
+    let url: URL
+    let language: String
+    /// Display name of the language, e.g. "English".
+    let languageName: String
+}
+
 struct FoundStream: Identifiable {
     let id = UUID()
     let addonName: String
@@ -98,5 +118,54 @@ struct StremioAddonClient {
         request.timeoutInterval = 20
         let data = try await URLSession.shared.fetch(request)
         return try JSONDecoder().decode(StreamResponse.self, from: data).streams
+    }
+
+    /// Subtitles for a movie or episode. Addons without subtitles answer with an error, which callers ignore.
+    func subtitles(type: String, id: String) async throws -> [StremioSubtitle] {
+        guard let url = URL(string: "\(base)/subtitles/\(type)/\(id).json") else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        let data = try await URLSession.shared.fetch(request)
+        return try JSONDecoder().decode(SubtitlesResponse.self, from: data).subtitles ?? []
+    }
+
+    /// Asks every addon for subtitles at once. The user's language comes first, then by language name.
+    static func subtitles(from addons: [AddonEntry], type: String, id: String,
+                          preferredLanguage: String) async -> [AddonSubtitle] {
+        var found: [AddonSubtitle] = []
+        await withTaskGroup(of: [AddonSubtitle].self) { group in
+            for addon in addons {
+                guard let manifest = URL(string: addon.manifestURL) else { continue }
+                group.addTask {
+                    let list = (try? await StremioAddonClient(manifestURL: manifest).subtitles(type: type, id: id)) ?? []
+                    return list.enumerated().compactMap { index, subtitle in
+                        guard let url = URL(string: subtitle.url) else { return nil }
+                        let code = subtitle.lang ?? "und"
+                        return AddonSubtitle(id: "\(addon.manifestURL)#\(subtitle.id ?? String(index))",
+                                             addonName: addon.name, url: url, language: code,
+                                             languageName: Self.languageName(code))
+                    }
+                }
+            }
+            for await list in group { found += list }
+        }
+        let preferred = languageName(preferredLanguage)
+        return found.sorted { a, b in
+            let pa = a.languageName == preferred, pb = b.languageName == preferred
+            if pa != pb { return pa }
+            return a.languageName.localizedCaseInsensitiveCompare(b.languageName) == .orderedAscending
+        }
+    }
+
+    /// "eng" or "en" → "English"; unknown codes are shown as they are.
+    static func languageName(_ code: String) -> String {
+        let lower = code.lowercased()
+        if let name = Locale(identifier: "en").localizedString(forLanguageCode: lower) { return name }
+        // ISO 639-2 codes Locale doesn't know by the three-letter form.
+        let common = ["eng": "English", "por": "Portuguese", "pob": "Portuguese (Brazil)", "spa": "Spanish",
+                      "fre": "French", "fra": "French", "ger": "German", "deu": "German", "ita": "Italian",
+                      "dut": "Dutch", "nld": "Dutch", "pol": "Polish", "rum": "Romanian", "ron": "Romanian",
+                      "gre": "Greek", "ell": "Greek", "chi": "Chinese", "zho": "Chinese", "cze": "Czech", "ces": "Czech"]
+        return common[lower] ?? code.uppercased()
     }
 }
