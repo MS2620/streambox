@@ -48,6 +48,8 @@ struct LiveTVView: View {
     @State private var channelsReload = 0
 
     private static let favouritesID = "__favourites"
+    private static let recentID = "__recent"
+    private static let searchID = "__search"
     private static let folderPrefix = "folder:"
     /// The guide builds every row up front, so very large groups are capped.
     private static let guideRowLimit = 200
@@ -91,11 +93,16 @@ struct LiveTVView: View {
                 list.append(favourites)
             }
         }
-        return list
+        // Search, then Recent, always at the top.
+        var top = [GroupEntry(id: Self.searchID, name: "Search", icon: "magnifyingglass")]
+        if !prefs.recentChannelIDs.isEmpty {
+            top.append(GroupEntry(id: Self.recentID, name: "Recent", icon: "clock.arrow.circlepath"))
+        }
+        return top + list
     }
 
     private var isFolderSelected: Bool {
-        selectedID?.hasPrefix(Self.folderPrefix) ?? false
+        (selectedID?.hasPrefix(Self.folderPrefix) ?? false) || selectedID == Self.recentID
     }
 
     private var sortedChannels: [XtreamChannel] {
@@ -117,6 +124,7 @@ struct LiveTVView: View {
 
     private var channelsKey: String {
         "\(channelsReload)|\(selectedID ?? "")|\(prefs.hiddenChannelIDs.count)|\(prefs.folders.hashValue)|\(prefs.favouriteChannelIDs.count)"
+            + (selectedID == Self.recentID ? "|\(prefs.recentChannelIDs)" : "")
     }
 
     private var guideKey: String {
@@ -154,7 +162,11 @@ struct LiveTVView: View {
                             }
                         }
                     Group {
-                        if prefs.liveLayout == .guide {
+                        if selectedID == Self.searchID {
+                            LiveSearchView { channel, results in
+                                play(channel, in: results, groupName: "Search")
+                            }
+                        } else if prefs.liveLayout == .guide {
                             guide
                         } else {
                             list
@@ -544,7 +556,7 @@ struct LiveTVView: View {
         infoChannel = nil
         infoEntry = nil
         selectedID = group.id
-        if prefs.rememberLastCategory { settings.prefs.lastCategoryID = group.id }
+        if prefs.rememberLastCategory && group.id != Self.searchID { settings.prefs.lastCategoryID = group.id }
     }
 
     /// Cell ids are "channel|start|n" in the guide and "channel" in the list.
@@ -574,14 +586,17 @@ struct LiveTVView: View {
     }
 
     private func play(_ channel: XtreamChannel) {
+        play(channel, in: sortedChannels, groupName: groups.first(where: { $0.id == selectedID })?.name)
+    }
+
+    private func play(_ channel: XtreamChannel, in all: [XtreamChannel], groupName: String?) {
         guard let url = client.liveURL(for: channel, format: prefs.liveFormat) else { return }
-        let all = sortedChannels
         let index = all.firstIndex(of: channel) ?? 0
         playback = PlaybackRequest(
             url: url,
             title: channel.name,
             artworkURL: channel.icon.flatMap { URL(string: $0) },
-            sourceName: groups.first(where: { $0.id == selectedID })?.name,
+            sourceName: groupName,
             isLive: true,
             httpHeaders: client.requestHeaders,
             live: LiveContext(channels: all, index: index)
@@ -597,10 +612,12 @@ struct LiveTVView: View {
             error = nil
             let ids = groups.map(\.id)
             if let selectedID, ids.contains(selectedID) { return }
+            // Opens on a real group, not Search or Recent.
+            let opening = ids.filter { $0 != Self.searchID && $0 != Self.recentID }
             if prefs.rememberLastCategory, let last = prefs.lastCategoryID, ids.contains(last) {
                 selectedID = last
             } else {
-                selectedID = ids.first
+                selectedID = opening.first ?? ids.first
             }
         } catch {
             self.error = error.localizedDescription
@@ -617,7 +634,15 @@ struct LiveTVView: View {
 
         let client = self.client
         var loaded: [XtreamChannel] = []
-        if selectedID == Self.favouritesID {
+        if selectedID == Self.searchID {
+            loaded = []
+        } else if selectedID == Self.recentID {
+            let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
+            let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            loaded = prefs.recentChannelIDs.compactMap { byID[$0] }.filter { channel in
+                settings.isVisible(channel) && !parental.isLocked(categoryID: channel.categoryID ?? "", prefs: prefs)
+            }
+        } else if selectedID == Self.favouritesID {
             let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
             loaded = all.filter { prefs.favouriteChannelIDs.contains($0.id) && settings.isVisible($0) }
         } else if selectedID.hasPrefix(Self.folderPrefix) {

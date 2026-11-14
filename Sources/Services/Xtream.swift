@@ -375,6 +375,16 @@ actor XtreamCache {
         client.account.normalizedServer + "|" + client.account.username
     }
 
+    /// Guide listings already downloaded this session, by channel, for searching.
+    func cachedListings(_ client: XtreamClient) -> [Int: [XtreamEPGEntry]] {
+        let prefix = accountKey(client) + "|"
+        var result: [Int: [XtreamEPGEntry]] = [:]
+        for (key, entry) in guides where key.hasPrefix(prefix) {
+            if let id = Int(key.dropFirst(prefix.count)) { result[id] = entry.value }
+        }
+        return result
+    }
+
     func liveStreams(_ client: XtreamClient) async throws -> [XtreamChannel] {
         let key = accountKey(client)
         if let streams, streams.key == key, Date().timeIntervalSince(streams.date) < Self.listLifetime {

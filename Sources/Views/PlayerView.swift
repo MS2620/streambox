@@ -72,7 +72,7 @@ private enum Panel: Identifiable {
     }
 }
 
-private enum Control: Hashable { case aspect, favourite, channels, subtitles, audio, stats, more, progress }
+private enum Control: Hashable { case aspect, favourite, channels, lastChannel, subtitles, audio, stats, more, progress }
 
 /// A pill under the title: plain, or the upscaling badge.
 private enum Badge: Hashable {
@@ -118,6 +118,8 @@ private struct AetherPlaybackView: View {
 
     // Resume and progress.
     @State private var resumeOffer: Double?
+    /// The channel before this one in the list, for "Last channel".
+    @State private var previousChannelIndex: Int?
     @State private var loadRequest: LoadRequest?
     // Subtitles from the user's addons; nil until the panel first asks.
     @State private var addonSubtitles: [AddonSubtitle]?
@@ -420,6 +422,9 @@ private struct AetherPlaybackView: View {
                 controlButton(isFavourite ? "heart.fill" : "heart", .favourite) { toggleFavourite() }
                 controlButton("square.grid.2x2", .channels) { open(.channels) }
             }
+            if current.isLive && previousChannelIndex != nil {
+                controlButton("arrow.uturn.backward", .lastChannel) { lastChannel() }
+            }
             controlButton("captions.bubble", .subtitles) { open(.subtitles) }
             controlButton("waveform", .audio) { open(.audio) }
             controlButton("chart.bar", .stats) { open(.stats) }
@@ -682,6 +687,7 @@ private struct AetherPlaybackView: View {
 
     /// Before loading a started movie or episode, asks whether to resume.
     private func prepare() {
+        rememberChannel()
         addonSubtitles = nil
         activeAddonSubtitle = nil
         if !current.isLive, let watch = current.watch,
@@ -921,8 +927,25 @@ private struct AetherPlaybackView: View {
         zap(to: ((live.index + delta) % count + count) % count)
     }
 
+    /// "Last channel": back to the channel before this one, and again to return.
+    private func lastChannel() {
+        guard let live = current.live, let previous = previousChannelIndex,
+              live.channels.indices.contains(previous) else { return }
+        zap(to: previous)
+    }
+
+    /// Newest first, 20 at most, for Live TV › Recent.
+    private func rememberChannel() {
+        guard current.isLive, let live = current.live, live.channels.indices.contains(live.index) else { return }
+        let id = live.channels[live.index].id
+        var recent = settings.prefs.recentChannelIDs.filter { $0 != id }
+        recent.insert(id, at: 0)
+        settings.prefs.recentChannelIDs = Array(recent.prefix(20))
+    }
+
     private func zap(to index: Int) {
         guard let live = current.live, live.channels.indices.contains(index) else { return }
+        if index != live.index { previousChannelIndex = live.index }
         let channel = live.channels[index]
         guard let url = settings.xtreamClient.liveURL(for: channel, format: prefs.liveFormat) else { return }
         retuneCount = 0
