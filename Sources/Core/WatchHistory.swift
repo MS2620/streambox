@@ -227,5 +227,6 @@ final class WatchHistory: ObservableObject {
         defaults.set(Array(watchedSeries), forKey: Self.seriesKey)
         defaults.set(Array(dismissedNextUp), forKey: Self.dismissedKey)
         defaults.set(Array(externalWatched), forKey: Self.externalKey)
+        TopShelfPublisher.publish()
     }
 }
