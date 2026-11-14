@@ -60,6 +60,8 @@ jobs:
       - name: Check app icon in the build
         run: |
           APP=build/Build/Products/Release-appletvos/StreamBox.app
+          echo "--- Version ---"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" -c "Print :CFBundleVersion" "$APP/Info.plist"
           echo "--- Info.plist icon keys ---"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP/Info.plist" || echo "No CFBundleIcons in Info.plist"
           /usr/libexec/PlistBuddy -c "Print :TVTopShelfImage" "$APP/Info.plist" || echo "No TVTopShelfImage in Info.plist"

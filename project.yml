@@ -27,6 +27,9 @@ targets:
       path: Config/Info.plist
       properties:
         CFBundleDisplayName: StreamBox
+        # Without these the generator writes a fixed "1.0 (1)"
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           # Many IPTV providers only serve plain http
@@ -54,6 +57,8 @@ targets:
       path: Config/TopShelf-Info.plist
       properties:
         CFBundleDisplayName: StreamBox Top Shelf
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.tv-top-shelf
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ContentProvider
