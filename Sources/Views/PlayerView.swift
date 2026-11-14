@@ -60,7 +60,7 @@ struct PlayerView: View {
 private enum OverlayMode { case hidden, info, controls }
 
 private enum Panel: Identifiable {
-    case channels, subtitles, audio, more
+    case channels, subtitles, audio, stats, more
     var id: Self { self }
 
     var title: String {
@@ -68,12 +68,19 @@ private enum Panel: Identifiable {
         case .channels: return "Channels"
         case .subtitles: return "Subtitles"
         case .audio: return "Audio"
+        case .stats: return "Playback stats"
         case .more: return "More"
         }
     }
 }
 
-private enum Control: Hashable { case aspect, favourite, channels, subtitles, audio, more, progress }
+private enum Control: Hashable { case aspect, favourite, channels, subtitles, audio, stats, more, progress }
+
+/// A pill under the title: plain, or the upscaling badge.
+private enum Badge: Hashable {
+    case plain(String)
+    case upscaling(String)
+}
 
 private struct PanelOption: Identifiable {
     let id: String
@@ -87,7 +94,11 @@ private struct AetherPlaybackView: View {
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject var engine: AetherEngine
     @ObservedObject private var clock: PlaybackClock
+    @ObservedObject private var upscaleLog = UpscaleLog.shared
     @State private var current: PlaybackRequest
+    /// Whether this load asked the engine to upscale, and with which scaler.
+    @State private var upscaleRequested = false
+    @State private var requestedScaler: UpscaleScaler = .automatic
 
     @Environment(\.dismiss) private var dismiss
     @State private var mode: OverlayMode = .controls
@@ -102,6 +113,7 @@ private struct AetherPlaybackView: View {
     @FocusState private var focusedControl: Control?
     @FocusState private var focusedOption: String?
     @FocusState private var rootFocused: Bool
+    @FocusState private var statsFocused: Bool
 
     // Live retune guard (see AetherEngine's Examples/LiveHost).
     @State private var retuneInFlight = false
@@ -279,10 +291,19 @@ private struct AetherPlaybackView: View {
 
             HStack(spacing: 10) {
                 ForEach(badges, id: \.self) { badge in
-                    Text(badge)
-                        .font(.system(size: 18, weight: .semibold))
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(.white.opacity(0.18), in: Capsule())
+                    switch badge {
+                    case .plain(let text):
+                        Text(text)
+                            .font(.system(size: 18, weight: .semibold))
+                            .padding(.horizontal, 12).padding(.vertical, 5)
+                            .background(.white.opacity(0.18), in: Capsule())
+                    case .upscaling(let text):
+                        Label(text, systemImage: "sparkles")
+                            .labelStyle(BadgeLabelStyle())
+                            .font(.system(size: 18, weight: .bold))
+                            .padding(.horizontal, 14).padding(.vertical, 5)
+                            .background(Self.upscaleGradient, in: Capsule())
+                    }
                 }
             }
 
@@ -372,6 +393,7 @@ private struct AetherPlaybackView: View {
             }
             controlButton("captions.bubble", .subtitles) { open(.subtitles) }
             controlButton("waveform", .audio) { open(.audio) }
+            controlButton("chart.bar", .stats) { open(.stats) }
             controlButton("ellipsis", .more) { open(.more) }
         }
         .padding(10)
@@ -404,29 +426,56 @@ private struct AetherPlaybackView: View {
 
     // MARK: - Badges
 
-    private var badges: [String] {
-        var list = ["AetherEngine"]
-        if let source = current.sourceName, !source.isEmpty { list.append(source) }
-        if let resolution = resolutionLabel { list.append(resolution) }
-        list.append(Self.formatLabel(engine.videoFormat))
-        if let fps = engine.sourceVideoFrameRate, fps > 0 {
-            list.append(abs(fps - fps.rounded()) < 0.01 ? "\(Int(fps.rounded())) fps" : String(format: "%.2f fps", fps))
-        }
-        if let audio = audioLabel { list.append(audio) }
+    private var badges: [Badge] {
+        var list: [Badge] = [.plain("AetherEngine")]
+        if let source = current.sourceName, !source.isEmpty { list.append(.plain(source)) }
+        if let resolution = resolutionLabel { list.append(.plain(resolution)) }
+        if let upscale = upscaleBadge { list.append(upscale) }
+        list.append(.plain(Self.formatLabel(engine.videoFormat)))
+        if let fps = frameRateLabel { list.append(.plain(fps)) }
+        if let audio = audioLabel { list.append(.plain(audio)) }
         return list
     }
 
+    private var frameRateLabel: String? {
+        guard let fps = engine.sourceVideoFrameRate, fps > 0 else { return nil }
+        return abs(fps - fps.rounded()) < 0.01 ? "\(Int(fps.rounded())) fps" : String(format: "%.2f fps", fps)
+    }
+
     private var resolutionLabel: String? {
+        // While upscaling, the picture on screen is the target size; the badge names the source.
+        if let upscale = engine.activeUpscale { return Self.sizeLabel(upscale.sourceSize) }
         let size = engine.currentAVPlayerItem?.presentationSize ?? engine.softwareDisplaySize ?? .zero
+        return Self.sizeLabel(size)
+    }
+
+    /// "Upscaling 720p → 4K" while the stage runs; a plain pill when it was asked for but isn't running.
+    private var upscaleBadge: Badge? {
+        if let upscale = engine.activeUpscale, upscale.disabledReason == nil {
+            let from = Self.sizeLabel(upscale.sourceSize) ?? "Video"
+            let to = Self.sizeLabel(upscale.targetSize) ?? "screen"
+            return .upscaling("Upscaling \(from) → \(to)")
+        }
+        guard upscaleRequested else { return nil }
+        if engine.activeUpscale?.disabledReason != nil { return .plain("Upscaling stopped") }
+        if upscaleLog.skipReason != nil { return .plain("Not upscaled") }
+        return nil
+    }
+
+    static func sizeLabel(_ size: CGSize) -> String? {
         let width = max(size.width, size.height * 16 / 9)
         switch width {
         case 3000...: return "4K"
         case 1800..<3000: return "1080p"
         case 1200..<1800: return "720p"
-        case 1..<1200: return "SD"
+        case 1..<1200: return size.height > 0 ? "\(Int(size.height))p" : "SD"
         default: return nil
         }
     }
+
+    static let upscaleGradient = LinearGradient(
+        colors: [Color(red: 0x7b / 255, green: 0x3b / 255, blue: 1), Color(red: 1, green: 0x3d / 255, blue: 0x7f / 255)],
+        startPoint: .leading, endPoint: .trailing)
 
     private var audioLabel: String? {
         let tracks = engine.audioTracks
@@ -436,7 +485,16 @@ private struct AetherPlaybackView: View {
 
     // MARK: - Panels
 
+    @ViewBuilder
     private func panelView(_ panel: Panel) -> some View {
+        if panel == .stats {
+            statsPanel
+        } else {
+            optionsPanel(panel)
+        }
+    }
+
+    private func optionsPanel(_ panel: Panel) -> some View {
         let options = panelOptions(panel)
         return HStack {
             Spacer()
@@ -480,6 +538,8 @@ private struct AetherPlaybackView: View {
 
     private func panelOptions(_ panel: Panel) -> [PanelOption] {
         switch panel {
+        case .stats:
+            return []
         case .subtitles:
             var options = [PanelOption(id: "off", title: "Off", selected: engine.activeSubtitleTrackIndex == nil) {
                 engine.clearSubtitle()
@@ -608,6 +668,9 @@ private struct AetherPlaybackView: View {
                 audioShaping: shaping
             )
         }
+        upscaleRequested = options.upscalesLowResolutionVideo
+        requestedScaler = options.upscaleScaler
+        UpscaleLog.shared.reset()
         do {
             // The Live TV guide preview plays muted on the same engine.
             engine.volume = 1
@@ -759,7 +822,8 @@ private struct AetherPlaybackView: View {
         var copy = current
         copy = PlaybackRequest(url: copy.url, title: copy.title, subtitle: copy.subtitle, overview: copy.overview,
                                artworkURL: copy.artworkURL, sourceName: copy.sourceName, isLive: copy.isLive,
-                               httpHeaders: copy.httpHeaders, live: copy.live)
+                               httpHeaders: copy.httpHeaders, live: copy.live,
+                               isAnimation: copy.isAnimation, sourceLines: copy.sourceLines)
         retuneCount = 0
         current = copy
     }
@@ -849,6 +913,233 @@ private struct AetherPlaybackView: View {
         let total = Int(seconds)
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+}
+
+// MARK: - Playback stats
+
+extension AetherPlaybackView {
+    /// The side panel from the PlayerStats design: video, upscaling, audio and playback facts.
+    var statsPanel: some View {
+        HStack {
+            Spacer()
+            VStack(alignment: .leading, spacing: 26) {
+                Text("Playback stats").font(.system(size: 32, weight: .heavy))
+
+                StatsSection("Video") {
+                    StatsRow("Source", sourceLine)
+                    if let fps = frameRateLabel {
+                        StatsRow("Frame rate", engine.sourceVideoScan.isInterlaced ? "\(fps) · interlaced" : fps)
+                    }
+                    StatsRow("Picture", Self.formatLabel(engine.videoFormat))
+                    if engine.sourceVideoBitrate > 0 {
+                        StatsRow("Bitrate", String(format: "%.1f Mb/s", Double(engine.sourceVideoBitrate) / 1_000_000))
+                    }
+                }
+
+                upscaleSection
+
+                StatsSection("Audio") {
+                    StatsRow("Track", audioTrackLine)
+                    StatsRow("Delivery", Self.deliveryLabel(engine.audioDelivery))
+                }
+
+                StatsSection("Playback") {
+                    StatsRow("Route", Self.routeLabel(engine.videoRoute, live: current.isLive))
+                    if let decoder = engine.activeVideoDecoder { StatsRow("Decoder", decoder) }
+                    if current.isLive {
+                        StatsRow("Behind live", "\(Int(clock.behindLiveSeconds.rounded())) s")
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 50)
+            .padding(.vertical, 60)
+            .frame(width: 760, alignment: .leading)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color(red: 30 / 255, green: 32 / 255, blue: 38 / 255).opacity(0.82))
+            // Nothing in the panel is a button; this keeps focus here so Back closes it.
+            .focusable()
+            .focused($statsFocused)
+            .focusEffectDisabled()
+            .onAppear {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(80))
+                    statsFocused = true
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private var upscaleSection: some View {
+        if let upscale = engine.activeUpscale {
+            let running = upscale.disabledReason == nil
+            StatsSection(running ? "Upscaling · On" : "Upscaling · Stopped", highlighted: running) {
+                StatsRow("From → to", "\(Self.pixels(upscale.sourceSize)) → \(Self.pixels(upscale.targetSize))")
+                StatsRow("Method", Self.methodLabel(upscale))
+                StatsRow("Status", upscaleStatus(upscale))
+            }
+        } else {
+            StatsSection("Upscaling · Off") {
+                StatsRow("Reason", upscaleOffReason)
+            }
+        }
+    }
+
+    private var upscaleOffReason: String {
+        guard upscaleRequested else { return "Turned off in Settings → Player" }
+        if let reason = upscaleLog.skipReason { return reason }
+        if upscaleLog.lastLine?.contains("taken:") == true { return "Starting…" }
+        return engine.hasFirstFrameReadyForDisplay ? "The player didn't use the upscaler for this video" : "Starting…"
+    }
+
+    private func upscaleStatus(_ upscale: UpscaleStatus) -> String {
+        if let reason = upscale.disabledReason { return "Stopped: \(reason)" }
+        if upscale.degraded { return "Reduced to keep up (MetalFX off)" }
+        if upscaleLog.fellBackFromLineArt { return "Running (line art was too slow here)" }
+        return "Running at full quality"
+    }
+
+    private var sourceLine: String {
+        let w = Int(engine.sourceVideoWidth), h = Int(engine.sourceVideoHeight)
+        let size = w > 0 && h > 0 ? "\(w) × \(h)" : "Unknown size"
+        guard let codec = engine.sourceVideoCodecName else { return size }
+        return "\(size) · \(Self.codecLabel(codec))"
+    }
+
+    private var audioTrackLine: String {
+        let tracks = engine.audioTracks
+        guard let track = tracks.first(where: { $0.id == engine.activeAudioTrackIndex }) ?? tracks.first else {
+            return "None"
+        }
+        let name = Self.trackTitle(track)
+        let description = Self.audioDescription(track)
+        return name == description ? name : "\(name) · \(description)"
+    }
+
+    static func pixels(_ size: CGSize) -> String {
+        "\(Int(size.width)) × \(Int(size.height))"
+    }
+
+    static func methodLabel(_ upscale: UpscaleStatus) -> String {
+        switch upscale.scaler {
+        case .lineArt:
+            let doubled = upscale.sourceSize.width * 2 == upscale.targetSize.width
+                && upscale.sourceSize.height * 2 == upscale.targetSize.height
+            return doubled ? "Line art ×2 (Anime4K)" : "Line art ×2 (Anime4K) + resize"
+        case .automatic:
+            guard !upscale.degraded, let ml = upscale.mlScale else {
+                return upscale.mlScale.map { "Super resolution ×\(Self.factor($0))" } ?? "MetalFX"
+            }
+            let fills = (upscale.sourceSize.width * CGFloat(ml)).rounded(.down) >= upscale.targetSize.width - 1
+            return fills ? "Super resolution ×\(Self.factor(ml))" : "Super resolution ×\(Self.factor(ml)) + MetalFX"
+        @unknown default:
+            return "Upscaler"
+        }
+    }
+
+    static func factor(_ value: Float) -> String {
+        value == value.rounded() ? "\(Int(value))" : String(format: "%g", value)
+    }
+
+    static func codecLabel(_ codec: String) -> String {
+        switch codec.lowercased() {
+        case "h264": return "H.264"
+        case "hevc": return "HEVC"
+        case "av1": return "AV1"
+        case "vp9": return "VP9"
+        case "mpeg2video": return "MPEG-2"
+        case "vc1": return "VC-1"
+        default: return codec.uppercased()
+        }
+    }
+
+    static func deliveryLabel(_ delivery: AudioDelivery) -> String {
+        switch delivery {
+        case .none: return "—"
+        case .noAudioInSource: return "No sound in this video"
+        case .streamCopy: return "Passed through unchanged"
+        case .bridged: return "Converted for Apple TV"
+        case .decoded: return "Decoded on Apple TV"
+        case .droppedNoPipeline: return "Sound format not supported"
+        case .playerManaged: return "Apple's player"
+        @unknown default: return "—"
+        }
+    }
+
+    static func routeLabel(_ route: VideoRoute, live: Bool) -> String {
+        switch route {
+        case .none: return "—"
+        case .remoteBypass: return "Apple's player (direct)"
+        case .loopback: return "Apple's player via the engine"
+        case .software: return live ? "Engine live pipeline" : "Engine software pipeline"
+        case .audio: return "Audio only"
+        @unknown default: return "—"
+        }
+    }
+}
+
+private struct StatsSection<Content: View>: View {
+    let title: String
+    let highlighted: Bool
+    @ViewBuilder let content: Content
+
+    init(_ title: String, highlighted: Bool = false, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.highlighted = highlighted
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title.uppercased())
+                .font(.system(size: 18, weight: .bold))
+                .tracking(1)
+                .foregroundStyle(.white.opacity(highlighted ? 0.8 : 0.6))
+            content
+        }
+        .padding(.horizontal, highlighted ? 20 : 0)
+        .padding(.vertical, highlighted ? 18 : 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if highlighted {
+                RoundedRectangle(cornerRadius: 18).fill(LinearGradient(
+                    colors: [Color(red: 0x7b / 255, green: 0x3b / 255, blue: 1).opacity(0.35),
+                             Color(red: 1, green: 0x3d / 255, blue: 0x7f / 255).opacity(0.25)],
+                    startPoint: .leading, endPoint: .trailing))
+            }
+        }
+    }
+}
+
+private struct StatsRow: View {
+    let label: String
+    let value: String
+
+    init(_ label: String, _ value: String) {
+        self.label = label
+        self.value = value
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 20) {
+            Text(label).foregroundStyle(.white.opacity(0.75))
+            Spacer(minLength: 0)
+            Text(value).fontWeight(.semibold).multilineTextAlignment(.trailing)
+        }
+        .font(.system(size: 22))
+    }
+}
+
+/// Icon and text a little closer than the default label spacing.
+private struct BadgeLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6) {
+            configuration.icon
+            configuration.title
+        }
     }
 }
 
