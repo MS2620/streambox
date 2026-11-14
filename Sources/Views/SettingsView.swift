@@ -2,6 +2,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
+    @ObservedObject private var updates = UpdateChecker.shared
+    @State private var showingNotes = false
 
     var body: some View {
         NavigationStack {
@@ -31,6 +33,18 @@ struct SettingsView: View {
 
                 GlassPanel("About") {
                     SettingsInfoRow("Version", icon: "info.circle", value: Self.version)
+                    Button {
+                        if updates.latest != nil { showingNotes = true }
+                    } label: {
+                        ListRowLabel(title: "Updates", icon: "arrow.up.circle",
+                                     trailing: updates.updateAvailable
+                                         ? "Build \(updates.latest?.build ?? 0) available"
+                                         : (updates.latest == nil ? "Checking…" : "Up to date"))
+                    }
+                    .buttonStyle(PlainPressStyle())
+                    .sheet(isPresented: $showingNotes) {
+                        if let latest = updates.latest { UpdateNotes(release: latest) }
+                    }
                     SettingsInfoRow("Top Shelf", icon: "rectangle.topthird.inset.filled",
                                     value: TopShelfStore.isAvailable ? "Ready" : "Blocked by signing (no App Group)")
                     SettingsInfoRow("Player engine", icon: "cpu", value: "AetherEngine")

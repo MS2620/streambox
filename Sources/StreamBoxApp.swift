@@ -69,6 +69,10 @@ struct RootView: View {
                 deepLink = DeepLink(url: url)
             }
             .task { TopShelfPublisher.publish() }
+            .overlay {
+                if !player.isPresentingPlayer { UpdateCard() }
+            }
+            .task { await UpdateChecker.shared.check() }
     }
 
     private var tabs: some View {
