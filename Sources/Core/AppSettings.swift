@@ -29,11 +29,21 @@ final class AppSettings: ObservableObject {
     @Published var realDebridKey: String { didSet { Keychain.set(realDebridKey, for: "realDebridKey") } }
     @Published var xtream: XtreamAccount { didSet { Keychain.setCodable(xtream, for: "xtream") } }
     @Published var addons: [AddonEntry] { didSet { Keychain.setCodable(addons, for: "addons") } }
+    @Published var prefs: Preferences { didSet { prefs.save() } }
+
+    var tmdb: TMDBClient {
+        TMDBClient(token: tmdbToken, language: prefs.tmdbLanguage, region: prefs.tmdbRegion)
+    }
+
+    var xtreamClient: XtreamClient {
+        XtreamClient(account: xtream, userAgent: prefs.iptvUserAgent)
+    }
 
     init() {
         tmdbToken = Keychain.string(for: "tmdbToken") ?? ""
         realDebridKey = Keychain.string(for: "realDebridKey") ?? ""
         xtream = Keychain.codable(XtreamAccount.self, for: "xtream") ?? XtreamAccount()
         addons = Keychain.codable([AddonEntry].self, for: "addons") ?? []
+        prefs = Preferences.load()
     }
 }

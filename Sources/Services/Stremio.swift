@@ -19,6 +19,17 @@ struct StremioStream: Decodable, Hashable {
         (name ?? "Stream").replacingOccurrences(of: "\n", with: " · ")
     }
 
+    /// Vertical resolution guessed from the addon's labels (2160, 1080, 720, 480), or 0 if unknown.
+    var resolution: Int {
+        let text = [name, title, description].compactMap { $0 }.joined(separator: " ").lowercased()
+        if text.contains("2160p") || text.contains("4k") || text.contains("uhd") { return 2160 }
+        if text.contains("1440p") { return 1440 }
+        if text.contains("1080p") { return 1080 }
+        if text.contains("720p") { return 720 }
+        if text.contains("576p") || text.contains("480p") || text.contains("sd ") { return 480 }
+        return 0
+    }
+
     var detail: String {
         (title ?? description ?? "").replacingOccurrences(of: "\n", with: "  ")
     }

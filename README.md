@@ -16,10 +16,15 @@ Sources/
   StreamBoxApp.swift         App entry + tab bar
   Core/                      Keychain, settings, helpers
   Services/                  TMDB, Stremio addon, Real-Debrid, Xtream clients
-  Player/                    mpv (MPVKit) player controller
+  Player/                    AetherEngine holder + subtitle overlay
   Views/                     Home/Search, Detail + stream picker, Live TV, Settings, Player
 .github/workflows/build.yml  CI: unsigned build (free) + optional TestFlight upload
 ```
+
+## Requirements
+
+- tvOS 18+ on the Apple TV
+- Xcode 27 to build (AetherEngine needs it). GitHub's `xcode-27` runner is used in CI.
 
 ## Working without a Mac
 
@@ -75,8 +80,8 @@ Tip: typing on the Apple TV is painful. Your iPhone shows a keyboard notificatio
 1. ~~Shell, TMDB rails, detail pages~~
 2. ~~Xtream live TV + short EPG~~
 3. ~~Stremio addon streams + Real-Debrid resolve~~
-4. ~~Player: mpv via MPVKit (MKV, HEVC, DTS/TrueHD, PGS/ASS subtitles)~~. Next: resume positions, track picker UI, HDR/frame-rate matching
-5. Xtream VOD + series, full XMLTV EPG grid, favourites
+4. ~~Player: AetherEngine for live TV, movies and series (MKV, HDR10/DV, Atmos passthrough, PGS/ASS subs, live retune)~~. Next: resume positions, track picker UI
+5. ~~Movies & Series tabs (TMDB rows + genres), Live TV favourites, hidden categories, sorting, timeshift, user agent, expanded settings~~. Next: Xtream VOD + series, full XMLTV EPG grid
 6. Continue watching / resume positions, Trakt sync
 7. More debrid providers (AllDebrid, Premiumize, TorBox), stream ranking and auto-pick
 8. Top shelf extension, profiles

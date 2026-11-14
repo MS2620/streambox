@@ -18,12 +18,14 @@ struct XtreamCategory: Decodable, Identifiable, Hashable {
 
 struct XtreamChannel: Decodable, Identifiable, Hashable {
     let id: Int
+    let number: Int?
     let name: String
     let icon: String?
     let categoryID: String?
 
     private enum CodingKeys: String, CodingKey {
         case streamID = "stream_id"
+        case num
         case name
         case streamIcon = "stream_icon"
         case categoryID = "category_id"
@@ -32,6 +34,7 @@ struct XtreamChannel: Decodable, Identifiable, Hashable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = c.flexInt(.streamID) ?? -1
+        number = c.flexInt(.num)
         name = (try? c.decode(String.self, forKey: .name)) ?? "Channel"
         let rawIcon = try? c.decode(String.self, forKey: .streamIcon)
         icon = (rawIcon?.isEmpty ?? true) ? nil : rawIcon
@@ -67,6 +70,12 @@ private struct ShortEPGResponse: Decodable {
 
 struct XtreamClient {
     let account: XtreamAccount
+    /// Optional User-Agent override; some providers only accept specific players.
+    var userAgent: String = ""
+
+    var requestHeaders: [String: String] {
+        userAgent.isEmpty ? [:] : ["User-Agent": userAgent]
+    }
 
     private func api(_ action: String?, _ extra: [String: String] = [:]) async throws -> Data {
         guard var comps = URLComponents(string: "\(account.normalizedServer)/player_api.php") else { throw URLError(.badURL) }
@@ -80,6 +89,7 @@ struct XtreamClient {
         guard let url = comps.url else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
+        for (key, value) in requestHeaders { request.setValue(value, forHTTPHeaderField: key) }
         return try await URLSession.shared.fetch(request)
     }
 
@@ -112,9 +122,9 @@ struct XtreamClient {
         return try JSONDecoder().decode(ShortEPGResponse.self, from: data).epgListings
     }
 
-    func liveURL(for channel: XtreamChannel) -> URL? {
+    func liveURL(for channel: XtreamChannel, format: LiveStreamFormat = .hls) -> URL? {
         let user = account.username.formEncoded
         let pass = account.password.formEncoded
-        return URL(string: "\(account.normalizedServer)/live/\(user)/\(pass)/\(channel.id).m3u8")
+        return URL(string: "\(account.normalizedServer)/live/\(user)/\(pass)/\(channel.id).\(format.fileExtension)")
     }
 }

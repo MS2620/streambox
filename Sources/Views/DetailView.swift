@@ -17,7 +17,7 @@ struct DetailView: View {
     @State private var streamTarget: StreamTarget?
     @State private var error: String?
 
-    private var tmdb: TMDBClient { TMDBClient(token: settings.tmdbToken) }
+    private var tmdb: TMDBClient { settings.tmdb }
 
     var body: some View {
         ZStack {
@@ -197,9 +197,34 @@ struct StreamListView: View {
             }
         }
 
-        results = found
+        results = arrange(found)
         loading = false
         if !failures.isEmpty { status = "Failed to reach: " + failures.joined(separator: ", ") }
+
+        if settings.prefs.autoPlayFirstStream, let first = results.first {
+            await play(first)
+        }
+    }
+
+    /// Applies the resolution limit and sort order from Settings → Streams.
+    private func arrange(_ streams: [FoundStream]) -> [FoundStream] {
+        let prefs = settings.prefs
+        var list = streams
+        if prefs.maxResolution != .any {
+            // Unknown resolution (0) is kept rather than hidden.
+            list = list.filter { $0.stream.resolution <= prefs.maxResolution.maxLines }
+        }
+        if prefs.streamSort == .quality {
+            // Stable sort: keeps addon order within the same resolution.
+            list = list.enumerated()
+                .sorted { a, b in
+                    a.element.stream.resolution != b.element.stream.resolution
+                        ? a.element.stream.resolution > b.element.stream.resolution
+                        : a.offset < b.offset
+                }
+                .map(\.element)
+        }
+        return list
     }
 
     private func play(_ result: FoundStream) async {

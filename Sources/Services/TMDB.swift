@@ -46,9 +46,14 @@ struct TVEpisode: Decodable, Hashable, Identifiable {
 /// Uses a TMDB "API Read Access Token" (v4 bearer token).
 struct TMDBClient {
     let token: String
+    var language: String = ""
+    var region: String = ""
 
     private func get<T: Decodable>(_ path: String, _ query: [String: String] = [:]) async throws -> T {
         guard var comps = URLComponents(string: "https://api.themoviedb.org/3/\(path)") else { throw URLError(.badURL) }
+        var query = query
+        if !language.isEmpty, query["language"] == nil { query["language"] = language }
+        if !region.isEmpty, query["region"] == nil { query["region"] = region }
         if !query.isEmpty { comps.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } }
         guard let url = comps.url else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
@@ -66,6 +71,20 @@ struct TMDBClient {
     func popular(_ type: MediaType) async throws -> [TMDBItem] {
         let page: TMDBPage<TMDBItem> = try await get("\(type.rawValue)/popular")
         return page.results.map { var item = $0; item.mediaType = type.rawValue; return item }
+    }
+
+    /// Any TMDB list endpoint, e.g. "movie/now_playing" or "tv/top_rated".
+    func list(_ path: String, type: MediaType, _ query: [String: String] = [:]) async throws -> [TMDBItem] {
+        let page: TMDBPage<TMDBItem> = try await get(path, query)
+        return page.results.map { var item = $0; item.mediaType = type.rawValue; return item }
+    }
+
+    func discover(_ type: MediaType, genre: Int) async throws -> [TMDBItem] {
+        try await list("discover/\(type.rawValue)", type: type, [
+            "with_genres": String(genre),
+            "sort_by": "popularity.desc",
+            "include_adult": "false",
+        ])
     }
 
     func search(_ query: String) async throws -> [TMDBItem] {

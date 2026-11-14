@@ -9,7 +9,7 @@ on:
 jobs:
   # Free: compiles the app (unsigned) on every push so you know the code builds.
   build:
-    runs-on: macos-latest
+    runs-on: xcode-27  # AetherEngine needs Xcode 27
     steps:
       - uses: actions/checkout@v4
 
@@ -48,7 +48,7 @@ jobs:
   testflight:
     needs: build
     if: github.event_name != 'pull_request' && vars.ENABLE_TESTFLIGHT == 'true'
-    runs-on: macos-latest
+    runs-on: xcode-27  # AetherEngine needs Xcode 27
     env:
       KEY_PATH: ${{ github.workspace }}/../AuthKey.p8
     steps:
