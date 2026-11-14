@@ -162,6 +162,15 @@ enum TeamNames {
         return map
     }()
 
+    /// The two-letter code when the team is a country ("PT" for Portugal).
+    static func regionCode(_ name: String) -> String? {
+        let key = GuideText.phrase(name)
+        switch key {
+        case "england", "scotland", "wales", "northern ireland": return "GB"
+        default: return regionIndex[key]
+        }
+    }
+
     /// The country's name in the languages IPTV guides are usually written in.
     static func countryNames(_ name: String) -> [String] {
         let key = GuideText.phrase(name)
@@ -308,8 +317,8 @@ struct FixtureMatcher {
 
     /// The names worth keeping when reading the guide: every followed team, and
     /// Formula 1 words when a constructor is followed.
-    static func indexKeywords(for teams: [FavouriteTeam]) -> KeywordSet {
-        var words: [String] = []
+    static func indexKeywords(for teams: [FavouriteTeam], race: Bool = false) -> KeywordSet {
+        var words: [String] = race ? raceWords : []
         for team in teams {
             if team.isF1 {
                 words += raceWords
@@ -335,9 +344,12 @@ struct GuideProgramme {
 }
 
 struct GuideIndex {
+    /// Listings that mention a followed team.
     let programmes: [GuideProgramme]
     /// When the last listing in the whole guide ends.
     let coverageEnd: Date?
+    /// Every listing in the guide, kept or not.
+    let totalListings: Int
 }
 
 /// Downloads the XMLTV guide (kept on disk between refreshes) and keeps only
@@ -474,117 +486,157 @@ enum XMLTVDate {
     }
 }
 
-/// Streams through the XMLTV file, keeping only listings that mention one of
-/// the keywords, so even very large guides use little memory.
-final class XMLTVReader: NSObject, XMLParserDelegate {
-    private let keywords: KeywordSet
-    private let windowStart = Date().addingTimeInterval(-6 * 3600)
-    private let windowEnd = Date().addingTimeInterval(21 * 86_400)
-
-    private var programmes: [GuideProgramme] = []
-    private var latestEnd: Date?
-
-    private var inProgramme = false
-    private var channel = ""
-    private var startText = ""
-    private var stopText = ""
-    private var field = ""
-    private var buffer = ""
-    private var title = ""
-    private var subTitle = ""
-    private var desc = ""
-
-    private init(keywords: KeywordSet) {
-        self.keywords = keywords
-    }
+/// Reads the XMLTV file in chunks, keeping only listings that mention one of
+/// the keywords, so even very large guides use little memory. It doesn't use a
+/// strict XML parser: IPTV guides often contain small mistakes (a bare "&" in a
+/// title) that would make one stop part-way through.
+enum XMLTVReader {
+    private static let open = Data("<programme".utf8)
+    private static let close = Data("</programme>".utf8)
 
     static func read(_ file: URL, keywords: KeywordSet) throws -> GuideIndex {
-        // Some panels send the guide gzip-compressed without saying so.
-        if let handle = try? FileHandle(forReadingFrom: file) {
-            let head = (try? handle.read(upToCount: 2)) ?? Data()
-            try? handle.close()
-            if head.count == 2, head[head.startIndex] == 0x1f, head[head.startIndex + 1] == 0x8b {
-                throw URLError(.cannotDecodeContentData)
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+
+        var collector = Collector(keywords: keywords)
+        var buffer = Data()
+        var first = true
+        var reachedEnd = false
+
+        while true {
+            var searchFrom = buffer.startIndex
+            while let start = buffer.range(of: open, in: searchFrom..<buffer.endIndex),
+                  let end = buffer.range(of: close, in: start.upperBound..<buffer.endIndex) {
+                collector.add(String(decoding: buffer[start.upperBound..<end.lowerBound], as: UTF8.self))
+                searchFrom = end.upperBound
+            }
+            // Keep only the unfinished listing (or the last few bytes, in case a tag is split).
+            if let start = buffer.range(of: open, in: searchFrom..<buffer.endIndex) {
+                buffer = Data(buffer[start.lowerBound...])
+            } else {
+                buffer = Data(buffer.suffix(open.count))
+            }
+            if reachedEnd { break }
+
+            let chunk = try handle.read(upToCount: 4 << 20) ?? Data()
+            if first {
+                first = false
+                // Some panels send the guide gzip-compressed without saying so.
+                if chunk.count >= 2, chunk[chunk.startIndex] == 0x1f, chunk[chunk.startIndex + 1] == 0x8b {
+                    throw GuideError.compressed
+                }
+            }
+            if chunk.isEmpty {
+                reachedEnd = true
+            } else {
+                buffer.append(chunk)
             }
         }
-        guard let stream = InputStream(url: file) else { throw URLError(.cannotOpenFile) }
-        let reader = XMLTVReader(keywords: keywords)
-        let parser = XMLParser(stream: stream)
-        parser.delegate = reader
-        parser.shouldResolveExternalEntities = false
-        let finished = parser.parse()
-        // A guide cut short still has everything read up to that point.
-        if !finished && reader.latestEnd == nil {
-            throw parser.parserError ?? URLError(.cannotParseResponse)
-        }
-        return GuideIndex(programmes: reader.programmes, coverageEnd: reader.latestEnd)
+
+        guard collector.listings > 0 else { throw GuideError.empty }
+        return GuideIndex(programmes: collector.programmes, coverageEnd: collector.latestEnd,
+                          totalListings: collector.listings)
     }
 
-    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
-                qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
-        switch elementName {
-        case "programme":
-            inProgramme = true
-            channel = (attributeDict["channel"] ?? "").trimmingCharacters(in: .whitespaces).lowercased()
-            startText = attributeDict["start"] ?? ""
-            stopText = attributeDict["stop"] ?? ""
-            title = ""
-            subTitle = ""
-            desc = ""
-        case "title", "sub-title", "desc":
-            if inProgramme {
-                field = elementName
-                buffer = ""
+    private struct Collector {
+        let keywords: KeywordSet
+        let windowStart = Date().addingTimeInterval(-6 * 3600)
+        let windowEnd = Date().addingTimeInterval(21 * 86_400)
+        var programmes: [GuideProgramme] = []
+        var latestEnd: Date?
+        var listings = 0
+
+        init(keywords: KeywordSet) {
+            self.keywords = keywords
+        }
+
+        /// `block` is everything between "<programme" and "</programme>".
+        mutating func add(_ block: String) {
+            guard let tagEnd = block.firstIndex(of: ">") else { return }
+            let attributes = block[..<tagEnd]
+            guard let end = XMLTVDate.parse(Self.attribute("stop", in: attributes)) else { return }
+            listings += 1
+            if latestEnd.map({ end > $0 }) ?? true { latestEnd = end }
+            let channel = Self.attribute("channel", in: attributes).trimmingCharacters(in: .whitespaces).lowercased()
+            guard end > windowStart, !channel.isEmpty,
+                  let start = XMLTVDate.parse(Self.attribute("start", in: attributes)), start < windowEnd else { return }
+
+            let body = block[block.index(after: tagEnd)...]
+            let title = Self.element("title", in: body)
+            let subTitle = Self.element("sub-title", in: body)
+            let desc = String(Self.element("desc", in: body).prefix(400))
+            let text = GuideText.normalize(title + " " + subTitle + " " + desc)
+            guard keywords.matches(text) else { return }
+            programmes.append(GuideProgramme(channel: channel, start: start, end: end,
+                                             title: title, description: desc, text: text))
+        }
+
+        /// The value of `name="…"` (or `name='…'`) in a tag.
+        static func attribute(_ name: String, in tag: Substring) -> String {
+            for quote in ["\"", "'"] {
+                guard let range = tag.range(of: " " + name + "=" + quote) ?? tag.range(of: "\n" + name + "=" + quote)
+                        ?? tag.range(of: "\t" + name + "=" + quote) else { continue }
+                let rest = tag[range.upperBound...]
+                if let close = rest.firstIndex(of: Character(quote)) {
+                    return decode(String(rest[..<close]))
+                }
             }
-        default:
-            break
+            return ""
+        }
+
+        /// The text of the first `<name …>…</name>` element.
+        static func element(_ name: String, in body: Substring) -> String {
+            guard let open = body.range(of: "<" + name) else { return "" }
+            // "<title" must not match "<titles"; the next character ends the tag name.
+            let after = body[open.upperBound...]
+            guard let next = after.first, next == ">" || next == " " || next == "\t" || next == "\n" || next == "/" else {
+                return ""
+            }
+            guard let tagEnd = after.firstIndex(of: ">") else { return "" }
+            if after[..<tagEnd].hasSuffix("/") { return "" }
+            let content = after[after.index(after: tagEnd)...]
+            guard let close = content.range(of: "</" + name) else { return "" }
+            var text = String(content[..<close.lowerBound])
+            if text.hasPrefix("<![CDATA[") {
+                text = String(text.dropFirst(9))
+                if text.hasSuffix("]]>") { text = String(text.dropLast(3)) }
+                return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return decode(text).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        /// The handful of XML entities guides use.
+        static func decode(_ text: String) -> String {
+            guard text.contains("&") else { return text }
+            var result = text
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&apos;", with: "'")
+                .replacingOccurrences(of: "&#39;", with: "'")
+            // Numeric entities such as &#231; (ç).
+            while let start = result.range(of: "&#"),
+                  let end = result[start.upperBound...].firstIndex(of: ";"),
+                  result.distance(from: start.upperBound, to: end) <= 7 {
+                let digits = result[start.upperBound..<end]
+                let value = digits.hasPrefix("x") ? UInt32(digits.dropFirst(), radix: 16) : UInt32(digits)
+                let replacement = value.flatMap { Unicode.Scalar($0) }.map { String(Character($0)) } ?? ""
+                result.replaceSubrange(start.lowerBound...end, with: replacement)
+            }
+            return result.replacingOccurrences(of: "&amp;", with: "&")
         }
     }
+}
 
-    func parser(_ parser: XMLParser, foundCharacters string: String) {
-        if !field.isEmpty { buffer += string }
-    }
+enum GuideError: LocalizedError {
+    case compressed
+    case empty
 
-    func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
-        if !field.isEmpty { buffer += String(decoding: CDATABlock, as: UTF8.self) }
-    }
-
-    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?,
-                qualifiedName qName: String?) {
-        switch elementName {
-        case "title":
-            // Guides can list a title per language; the first is kept.
-            if title.isEmpty { title = buffer }
-            field = ""
-        case "sub-title":
-            if subTitle.isEmpty { subTitle = buffer }
-            field = ""
-        case "desc":
-            if desc.isEmpty { desc = String(buffer.prefix(400)) }
-            field = ""
-        case "programme":
-            finishProgramme()
-            inProgramme = false
-        default:
-            break
+    var errorDescription: String? {
+        switch self {
+        case .compressed: return "the guide file is compressed"
+        case .empty: return "the guide file has no listings"
         }
-    }
-
-    private func finishProgramme() {
-        guard let end = XMLTVDate.parse(stopText) else { return }
-        if latestEnd.map({ end > $0 }) ?? true { latestEnd = end }
-        guard end > windowStart, !channel.isEmpty,
-              let start = XMLTVDate.parse(startText), start < windowEnd else { return }
-        let text = GuideText.normalize(title + " " + subTitle + " " + desc)
-        guard keywords.matches(text) else { return }
-        programmes.append(GuideProgramme(
-            channel: channel,
-            start: start,
-            end: end,
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            description: desc.trimmingCharacters(in: .whitespacesAndNewlines),
-            text: text
-        ))
     }
 }
 
@@ -602,6 +654,8 @@ struct ChannelSearch {
     var matches: [ChannelMatch] = []
     /// Where the provider's guide ends, when the whole guide could be read.
     var guideEnds: Date?
+    /// What was searched, shown in small print when nothing is found.
+    var details: String?
 }
 
 enum ChannelFinder {
@@ -617,7 +671,8 @@ enum ChannelFinder {
         begins <= start.addingTimeInterval(20 * 60) && ends >= start.addingTimeInterval(5 * 60)
     }
 
-    /// Looks for the fixture in the provider's TV guide.
+    /// Looks for the fixture in the provider's TV guide: first in the whole
+    /// guide file, then, if that finds nothing, channel by channel.
     /// - Parameters:
     ///   - teams: the followed teams; the guide is read once for all of them.
     ///   - preferred: favourite and folder channels, listed first among equal matches.
@@ -625,7 +680,12 @@ enum ChannelFinder {
     static func search(for fixture: Fixture, client: XtreamClient, teams: [FavouriteTeam],
                        hiddenCategories: Set<String>, hiddenChannels: Set<Int>,
                        preferred: Set<Int>, force: Bool = false) async -> ChannelSearch {
-        guard let all = try? await XtreamCache.shared.liveStreams(client) else { return ChannelSearch() }
+        let all: [XtreamChannel]
+        do {
+            all = try await XtreamCache.shared.liveStreams(client)
+        } catch {
+            return ChannelSearch(details: "Couldn't load your channel list: \(error.localizedDescription)")
+        }
         let streams = all.filter { channel in
             if hiddenChannels.contains(channel.id) { return false }
             if let category = channel.categoryID, hiddenCategories.contains(category) { return false }
@@ -633,16 +693,23 @@ enum ChannelFinder {
         }
         let matcher = FixtureMatcher(fixture: fixture)
         let start = fixture.guideTime
-        let keywords = FixtureMatcher.indexKeywords(for: teams)
+        // Only followed teams decide what is kept from the guide, so it is read
+        // once for every fixture rather than again for each opponent.
+        let keywords = FixtureMatcher.indexKeywords(for: teams, race: fixture.isRace)
 
-        if !keywords.isEmpty,
-           let guide = try? await SportsGuide.shared.index(client, keywords: keywords, force: force) {
+        var notes: [String] = []
+        var guideEnds: Date?
+        do {
+            let guide = try await SportsGuide.shared.index(client, keywords: keywords, force: force)
+            guideEnds = guide.coverageEnd
             var byGuideID: [String: [XtreamChannel]] = [:]
             for channel in streams {
                 if let id = channel.epgChannelID?.lowercased() { byGuideID[id, default: []].append(channel) }
             }
             var best: [Int: ChannelMatch] = [:]
+            var onAir = 0
             for programme in guide.programmes where isOnAir(programme.start, programme.end, at: start) {
+                onAir += 1
                 guard let channels = byGuideID[programme.channel] else { continue }
                 let (score, both) = matcher.score(normalized: programme.text, title: programme.title)
                 guard score >= FixtureMatcher.threshold else { continue }
@@ -652,13 +719,21 @@ enum ChannelFinder {
                     best[channel.id] = ChannelMatch(channel: channel, programme: entry, score: score, bothTeams: both)
                 }
             }
-            return ChannelSearch(matches: rank(Array(best.values), preferred: preferred), guideEnds: guide.coverageEnd)
+            if !best.isEmpty {
+                return ChannelSearch(matches: rank(Array(best.values), preferred: preferred), guideEnds: guideEnds)
+            }
+            notes.append("Full guide: \(guide.totalListings) listings, \(guide.programmes.count) about your teams, "
+                         + "\(onAir) on at that time, \(byGuideID.count) channels linked to it.")
+        } catch {
+            notes.append("Full guide unavailable (\(error.localizedDescription)).")
         }
 
-        // The whole guide couldn't be read: ask channel by channel instead.
-        let matches = await searchChannelByChannel(streams: streams, client: client, matcher: matcher,
-                                                   start: start, preferred: preferred)
-        return ChannelSearch(matches: matches, guideEnds: nil)
+        // Ask channel by channel instead.
+        let (matches, searched) = await searchChannelByChannel(streams: streams, client: client, fixture: fixture,
+                                                               matcher: matcher, start: start, preferred: preferred)
+        notes.append("Checked \(searched) channels one by one.")
+        return ChannelSearch(matches: matches, guideEnds: guideEnds,
+                             details: matches.isEmpty ? notes.joined(separator: " ") : nil)
     }
 
     /// Best first; favourites and folder channels first among equals, then HD.
@@ -700,22 +775,48 @@ enum ChannelFinder {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    private static func searchChannelByChannel(streams: [XtreamChannel], client: XtreamClient,
+    /// Favourites and folders first, then channels from the teams' countries
+    /// ("PT| RTP 1", a "Portugal" group), then sports channels.
+    private static func searchChannelByChannel(streams: [XtreamChannel], client: XtreamClient, fixture: Fixture,
                                                matcher: FixtureMatcher, start: Date,
-                                               preferred: Set<Int>) async -> [ChannelMatch] {
+                                               preferred: Set<Int>) async -> ([ChannelMatch], Int) {
         let cache = XtreamCache.shared
         let categories = (try? await cache.liveCategories(client)) ?? []
         let sportCategories = Set(categories
             .filter { category in sportWords.contains { category.name.lowercased().contains($0) } }
             .map(\.id))
-        var candidates = streams.filter { channel in
-            if preferred.contains(channel.id) { return true }
+
+        var countryNames: [String] = []
+        var countryCodes: [String] = []
+        for side in [fixture.home, fixture.away].compactMap({ $0 }) {
+            if let code = TeamNames.regionCode(side.name) {
+                countryCodes.append(code.lowercased())
+                countryNames += TeamNames.countryNames(side.name).map(GuideText.phrase)
+            }
+        }
+        let countryKeys = KeywordSet(countryNames)
+        let countryCategories = Set(categories
+            .filter { countryKeys.matches(GuideText.normalize($0.name)) }
+            .map(\.id))
+        func isFromCountry(_ channel: XtreamChannel) -> Bool {
+            if let category = channel.categoryID, countryCategories.contains(category) { return true }
+            let name = channel.name.lowercased()
+            return countryCodes.contains { code in
+                name.hasPrefix(code + "|") || name.hasPrefix(code + " |") || name.hasPrefix(code + ":")
+                    || name.hasPrefix(code + " ") || name.hasPrefix("[" + code + "]")
+            }
+        }
+        func isSports(_ channel: XtreamChannel) -> Bool {
             if let category = channel.categoryID, sportCategories.contains(category) { return true }
             let name = channel.name.lowercased()
             return sportWords.contains { name.contains($0) }
         }
+
+        let first = streams.filter { preferred.contains($0.id) }
+        let country = streams.filter { !preferred.contains($0.id) && isFromCountry($0) }
+        let sports = streams.filter { !preferred.contains($0.id) && !isFromCountry($0) && isSports($0) }
         // Keep the downloads bounded on very large playlists.
-        if candidates.count > 400 { candidates = Array(candidates.prefix(400)) }
+        let candidates = Array((first + country + sports).prefix(500))
 
         var results: [ChannelMatch] = []
         var queue = candidates.makeIterator()
@@ -731,7 +832,7 @@ enum ChannelFinder {
                 }
             }
         }
-        return rank(results, preferred: preferred)
+        return (rank(results, preferred: preferred), candidates.count)
     }
 
     private static func match(_ channel: XtreamChannel, start: Date, matcher: FixtureMatcher,

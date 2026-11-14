@@ -6,7 +6,6 @@ struct SportsView: View {
     @EnvironmentObject var settings: AppSettings
     @State private var fixtures: [Fixture] = []
     @State private var loading = false
-    @State private var selected: Fixture?
 
     private var teams: [FavouriteTeam] { settings.prefs.favouriteTeams }
     private var days: Int { settings.prefs.sportsDaysAhead }
@@ -59,9 +58,7 @@ struct SportsView: View {
                     if !today.isEmpty {
                         row("Today") {
                             ForEach(today) { fixture in
-                                Button {
-                                    selected = fixture
-                                } label: {
+                                NavigationLink(value: fixture) {
                                     FixtureTile(fixture: fixture, width: 480)
                                 }
                                 .buttonStyle(PlainPressStyle())
@@ -72,9 +69,7 @@ struct SportsView: View {
                     if !later.isEmpty {
                         row("Next \(days) days") {
                             ForEach(later) { fixture in
-                                Button {
-                                    selected = fixture
-                                } label: {
+                                NavigationLink(value: fixture) {
                                     UpcomingCard(fixture: fixture)
                                 }
                                 .buttonStyle(PlainPressStyle())
@@ -86,12 +81,17 @@ struct SportsView: View {
                         row("My Teams") {
                             ForEach(teams) { team in
                                 let next = fixtures.first { $0.followed.contains(team.name) }
-                                Button {
-                                    if let next { selected = next }
-                                } label: {
-                                    TeamTile(team: team, next: next)
+                                if let next {
+                                    NavigationLink(value: next) {
+                                        TeamTile(team: team, next: next)
+                                    }
+                                    .buttonStyle(PlainPressStyle())
+                                } else {
+                                    Button {} label: {
+                                        TeamTile(team: team, next: nil)
+                                    }
+                                    .buttonStyle(PlainPressStyle())
                                 }
-                                .buttonStyle(PlainPressStyle())
                             }
                         }
                     }
@@ -100,7 +100,7 @@ struct SportsView: View {
             }
             .background(AppBackground())
             .task(id: loadKey) { await load() }
-            .sheet(item: $selected) { fixture in
+            .navigationDestination(for: Fixture.self) { fixture in
                 FixtureDetailView(fixture: fixture)
             }
         }
@@ -362,30 +362,26 @@ struct FixtureDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
-                HStack(alignment: .center, spacing: 36) {
+                HStack(alignment: .center, spacing: 30) {
                     FixtureArt(fixture: fixture)
-                        .frame(width: 380, height: 214)
+                        .frame(width: 330, height: 186)
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(fixture.title)
-                            .font(.system(size: 50, weight: .heavy))
+                        .shadow(color: .black.opacity(0.35), radius: 16, y: 10)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(displayTitle)
+                            .font(.system(size: 46, weight: .heavy))
                             .lineLimit(2)
                             .minimumScaleFactor(0.6)
-                        if let subtitle = fixture.subtitle {
-                            Text(subtitle)
-                                .font(.system(size: 24, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.7))
+                        if let subtitle = fixture.subtitle, !subtitle.isEmpty {
+                            Label(subtitle, systemImage: fixture.isRace ? "flag.checkered" : "mappin.and.ellipse")
+                                .font(.system(size: 23, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.85))
                         }
                         Text(fixture.competition)
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.7))
-                        Text(fixture.date.formatted(date: .complete, time: .shortened))
-                            .font(.system(size: 26, weight: .bold))
-                        if !fixture.followed.isEmpty {
-                            Label("Following: " + fixture.followed.joined(separator: ", "), systemImage: "star.fill")
-                                .font(.system(size: 20, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.7))
-                        }
+                            .font(.system(size: 23, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85))
+                        Text(dateLine)
+                            .font(.system(size: 24, weight: .bold))
                     }
                 }
 
@@ -405,9 +401,7 @@ struct FixtureDetailView: View {
                     }
                 }
 
-                GlassPanel(matches.isEmpty ? "Watch" : "Watch · \(matches.count) in your TV guide") {
-                    guideSection
-                }
+                watchPanel
                 if !matches.isEmpty {
                     SettingsNote("Found by searching every channel's TV guide at kick-off time. Hidden groups and channels are skipped.")
                 }
@@ -419,7 +413,7 @@ struct FixtureDetailView: View {
                         .padding(.horizontal, 20)
                 }
             }
-            .frame(maxWidth: 1100)
+            .frame(maxWidth: 1180)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 60)
         }
@@ -431,6 +425,50 @@ struct FixtureDetailView: View {
         .sheet(isPresented: $showingSportsChannels) {
             SportsChannelsSheet()
         }
+    }
+
+    /// "Portugal – Denmark" (ESPN writes "Portugal v Denmark").
+    private var displayTitle: String {
+        fixture.title.replacingOccurrences(of: " v ", with: " – ")
+    }
+
+    /// "Saturday, 14 November at 19:45".
+    private var dateLine: String {
+        fixture.guideTime.formatted(.dateTime.weekday(.wide).day().month(.wide)) + " at " + DayFormat.time(fixture.guideTime)
+    }
+
+    /// Every channel showing the match, edge to edge with dividers, like NOWseen.
+    private var watchPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("WATCH")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white.opacity(0.7))
+                .padding(.horizontal, 28)
+                .padding(.top, 18)
+                .padding(.bottom, 10)
+            if matches.isEmpty {
+                guideSection
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 12)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(matches.enumerated()), id: \.element.id) { index, match in
+                        Button {
+                            play(index)
+                        } label: {
+                            MatchRowLabel(match: match, line: programmeLine(match.programme),
+                                          showsDivider: index < matches.count - 1)
+                        }
+                        .buttonStyle(PlainPressStyle())
+                    }
+                }
+                .padding(.bottom, 6)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 30, style: .continuous).fill(Theme.glass))
+        .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).stroke(.white.opacity(0.1), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
     }
 
     private func note(_ text: String) -> some View {
@@ -449,17 +487,8 @@ struct FixtureDetailView: View {
             ProgressView("Searching your TV guide…")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
-        } else if matches.isEmpty {
-            notFound
         } else {
-            ForEach(Array(matches.enumerated()), id: \.element.id) { index, match in
-                Button {
-                    play(index)
-                } label: {
-                    MatchRowLabel(match: match, line: programmeLine(match.programme))
-                }
-                .buttonStyle(PlainPressStyle())
-            }
+            notFound
         }
     }
 
@@ -494,6 +523,14 @@ struct FixtureDetailView: View {
                 .buttonStyle(PlainPressStyle())
             }
             .padding(.leading, 56)
+            if let details = result.details {
+                // What was searched, so a photo of this screen shows where it went wrong.
+                Text(details)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 56)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
@@ -507,9 +544,10 @@ struct FixtureDetailView: View {
         return "None of your channels list it at that time. Listings can be added late, so try again closer to the start."
     }
 
+    /// "Liga das Nações - Portugal x Dinamarca (Direto) · 19:45–21:45 · Olyviax".
     private func programmeLine(_ entry: XtreamEPGEntry) -> String {
         let times = [entry.start, entry.end].compactMap { $0 }.map(DayFormat.time).joined(separator: "–")
-        return times.isEmpty ? entry.title : "\(entry.title) · \(times)"
+        return [entry.title, times, settings.xtream.displayName].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private func search(force: Bool) async {
@@ -545,48 +583,48 @@ struct FixtureDetailView: View {
 }
 
 /// A channel showing the fixture: logo, name, the listing and "Tune in".
+/// Rows run edge to edge inside the Watch panel, with a divider between them.
 private struct MatchRowLabel: View {
     let match: ChannelMatch
     let line: String
+    var showsDivider = true
     @Environment(\.isFocused) private var isFocused
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 22) {
             AsyncImage(url: match.channel.icon.flatMap { URL(string: $0) }) { image in
                 image.resizable().aspectRatio(contentMode: .fit)
             } placeholder: {
                 RoundedRectangle(cornerRadius: 6).fill(Theme.glassStrong)
             }
-            .frame(width: 86, height: 48)
+            .frame(width: 70, height: 40)
             VStack(alignment: .leading, spacing: 3) {
                 Text(match.channel.name)
-                    .font(.system(size: 26, weight: .semibold))
+                    .font(.system(size: 27, weight: .semibold))
                     .lineLimit(1)
                 Text(line)
                     .font(.system(size: 19, weight: .medium))
-                    .opacity(0.7)
+                    .opacity(0.75)
                     .lineLimit(1)
             }
             Spacer(minLength: 12)
-            if match.bothTeams {
-                Text("Both teams")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(isFocused ? Theme.ink : Theme.glassStrong))
-            }
             Text("Tune in")
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 22, weight: .semibold))
+                .opacity(0.8)
         }
         .foregroundStyle(isFocused ? Theme.ink : Color.white)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 28)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(isFocused ? Color.white : Color.clear)
-        )
+        .background(isFocused ? Color.white : Color.clear)
+        .overlay(alignment: .bottom) {
+            if showsDivider && !isFocused {
+                Rectangle()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(height: 1)
+                    .padding(.horizontal, 28)
+            }
+        }
         .animation(.easeOut(duration: 0.12), value: isFocused)
     }
 }

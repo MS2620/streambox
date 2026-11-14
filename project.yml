@@ -16,7 +16,7 @@ targets:
   StreamBox:
     type: application
     platform: tvOS
-    sources: [Sources]
+    sources: [Sources, Resources]
     dependencies:
       - package: AetherEngine
         product: AetherEngine
@@ -33,4 +33,5 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mauro.streambox
         TARGETED_DEVICE_FAMILY: "3"
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
         GENERATE_INFOPLIST_FILE: NO

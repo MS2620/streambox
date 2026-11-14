@@ -211,17 +211,21 @@ private struct ESPNEvent: Decodable {
     /// Each field decodes on its own, so an unexpected shape in one
     /// (broadcasts differ between endpoints) doesn't drop the fixture.
     struct Competition: Decodable {
+        struct Venue: Decodable { let fullName: String? }
+
         let competitors: [Competitor]?
         let broadcasts: [Broadcast]?
         let status: Status?
+        let venue: Venue?
 
-        private enum CodingKeys: String, CodingKey { case competitors, broadcasts, status }
+        private enum CodingKeys: String, CodingKey { case competitors, broadcasts, status, venue }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             competitors = try? c.decode([Competitor].self, forKey: .competitors)
             broadcasts = try? c.decode([Broadcast].self, forKey: .broadcasts)
             status = try? c.decode(Status.self, forKey: .status)
+            venue = try? c.decode(Venue.self, forKey: .venue)
         }
     }
     struct Competitor: Decodable {
@@ -468,6 +472,7 @@ struct ESPNClient {
             title: title.isEmpty ? (event.name ?? "Match") : title,
             home: home,
             away: away,
+            subtitle: competition.venue?.fullName,
             broadcasts: Array(Set(broadcasts)).sorted(),
             keywords: Array(Set((homeTeam?.keywords ?? []) + (awayTeam?.keywords ?? []))),
             followed: playing.map(\.name)

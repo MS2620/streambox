@@ -101,8 +101,6 @@ struct CatalogView: View {
 
     @State private var hero: HeroContent?
     @State private var pending: HeroContent?
-    /// The row holding focus; it is scrolled so its title sits just below the banner.
-    @State private var focusedRow: String?
 
     /// Height of the banner's text area; the rows scroll underneath it.
     private static let heroHeight: CGFloat = 590
@@ -122,31 +120,25 @@ struct CatalogView: View {
                         HeroInfo(hero: hero)
                             .frame(height: Self.heroHeight)
 
-                        ScrollViewReader { proxy in
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 30) {
-                                    rows
-                                }
-                                .padding(.top, 4)
-                                .padding(.bottom, 90)
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 10) {
+                                rows
                             }
-                            .contentMargins(.horizontal, 0, for: .scrollContent)
-                            .ignoresSafeArea()
-                            // Rows scrolled past are cut off at the banner instead of running under its text.
-                            .clipShape(Rectangle())
-                            .onChange(of: focusedRow) { _, row in
-                                guard let row else { return }
-                                withAnimation(.easeOut(duration: 0.25)) {
-                                    proxy.scrollTo(row, anchor: .top)
-                                }
-                            }
+                            .padding(.bottom, 90)
                         }
+                        .contentMargins(.horizontal, 0, for: .scrollContent)
+                        .ignoresSafeArea()
+                        // Rows scrolled past are cut off at the banner instead of running under its text.
+                        .clipShape(Rectangle())
                     }
                     .ignoresSafeArea()
                 }
             }
             .navigationDestination(for: TMDBItem.self) { item in
                 DetailView(item: item)
+            }
+            .navigationDestination(for: Fixture.self) { fixture in
+                FixtureDetailView(fixture: fixture)
             }
             .navigationDestination(for: XtreamSeries.self) { series in
                 ProviderSeriesView(series: series)
@@ -218,12 +210,9 @@ struct CatalogView: View {
         }
     }
 
-    /// The focus handler for one row: updates the banner and lines the row up under it.
+    /// The focus handler for a row: the banner follows the focused card.
     private func focus(in row: String) -> (HeroContent) -> Void {
-        { content in
-            pending = content
-            if focusedRow != row { focusedRow = row }
-        }
+        { content in pending = content }
     }
 
     /// The first row to load fills the banner until something is focused.
@@ -424,6 +413,29 @@ private struct LazyRail: View {
 }
 
 /// A horizontal row of titles. Reports the focused title through `onFocus`.
+/// Every card in a row carries this much empty space above it, and the row's
+/// title is drawn there. Because the space belongs to the card, the Apple TV
+/// scrolls it into view with the focused card, so the title can't end up
+/// hidden under the banner.
+enum RowLayout {
+    static let titleSpace: CGFloat = 64
+}
+
+/// A row's heading, drawn in the space above its cards.
+struct RowTitle: View {
+    let text: String
+    var inset: CGFloat = 90
+
+    var body: some View {
+        Text(text)
+            .font(.title3).bold()
+            .lineLimit(1)
+            .padding(.leading, inset)
+            .padding(.top, 4)
+            .allowsHitTesting(false)
+    }
+}
+
 struct RailView: View {
     let title: String
     let items: [TMDBItem]
@@ -443,38 +455,44 @@ struct RailView: View {
         self.onFocus = onFocus
     }
 
+    @ViewBuilder
+    private func card(_ item: TMDBItem, index: Int) -> some View {
+        switch style {
+        case .poster:
+            PosterTile(item: item)
+        case .landscape:
+            BackdropCard(item: item)
+        case .ranked:
+            HStack(alignment: .bottom, spacing: 0) {
+                Text("\(index + 1)")
+                    .font(.system(size: 150, weight: .black))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .padding(.bottom, 24)
+                PosterTile(item: item)
+            }
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.title3).bold()
-                .padding(.horizontal, inset)
+        Group {
             ScrollView(.horizontal) {
                 LazyHStack(alignment: .top, spacing: 40) {
                     ForEach(Array(items.enumerated()), id: \.element.uid) { index, item in
                         NavigationLink(value: item) {
-                            switch style {
-                            case .poster:
-                                PosterTile(item: item)
-                            case .landscape:
-                                BackdropCard(item: item)
-                            case .ranked:
-                                HStack(alignment: .bottom, spacing: 0) {
-                                    Text("\(index + 1)")
-                                        .font(.system(size: 150, weight: .black))
-                                        .foregroundStyle(.white.opacity(0.35))
-                                        .padding(.bottom, 24)
-                                    PosterTile(item: item)
-                                }
-                            }
+                            card(item, index: index)
+                                .padding(.top, RowLayout.titleSpace)
                         }
                         .buttonStyle(PlainPressStyle())
                         .focused($focusedID, equals: item.uid)
                     }
                 }
                 .padding(.horizontal, inset)
-                .padding(.vertical, 30)
+                .padding(.bottom, 30)
             }
             .scrollClipDisabled()
+            .overlay(alignment: .topLeading) {
+                RowTitle(text: title, inset: inset)
+            }
         }
         .onChange(of: focusedID) { _, id in
             guard let id, let item = items.first(where: { $0.uid == id }) else { return }
@@ -613,27 +631,26 @@ private struct FavouriteChannelsRow: View {
     var body: some View {
         Group {
             if !channels.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Favourite Channels")
-                        .font(.title3).bold()
-                        .padding(.horizontal, 90)
-                    ScrollView(.horizontal) {
+                ScrollView(.horizontal) {
                         LazyHStack(alignment: .top, spacing: 40) {
                             ForEach(Array(channels.enumerated()), id: \.element.id) { index, channel in
                                 Button {
                                     play(index)
                                 } label: {
                                     ChannelTile(channel: channel)
+                                        .padding(.top, RowLayout.titleSpace)
                                 }
                                 .buttonStyle(PlainPressStyle())
                                 .focused($focusedID, equals: channel.id)
                             }
                         }
                         .padding(.horizontal, 90)
-                        .padding(.vertical, 30)
+                        .padding(.bottom, 30)
                     }
                     .scrollClipDisabled()
-                }
+                    .overlay(alignment: .topLeading) {
+                        RowTitle(text: "Favourite Channels", inset: 90)
+                    }
             } else {
                 Color.clear.frame(height: 1)
             }
@@ -681,7 +698,6 @@ private struct UpcomingFixturesRow: View {
     let onFocus: (HeroContent) -> Void
 
     @State private var fixtures: [Fixture] = []
-    @State private var selected: Fixture?
     @FocusState private var focusedID: String?
 
     private var loadKey: String {
@@ -691,27 +707,24 @@ private struct UpcomingFixturesRow: View {
     var body: some View {
         Group {
             if !fixtures.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("My Teams")
-                        .font(.title3).bold()
-                        .padding(.horizontal, 90)
-                    ScrollView(.horizontal) {
+                ScrollView(.horizontal) {
                         LazyHStack(alignment: .top, spacing: 40) {
                             ForEach(fixtures) { fixture in
-                                Button {
-                                    selected = fixture
-                                } label: {
+                                NavigationLink(value: fixture) {
                                     FixtureTile(fixture: fixture, width: 440)
+                                        .padding(.top, RowLayout.titleSpace)
                                 }
                                 .buttonStyle(PlainPressStyle())
                                 .focused($focusedID, equals: fixture.id)
                             }
                         }
                         .padding(.horizontal, 90)
-                        .padding(.vertical, 30)
+                        .padding(.bottom, 30)
                     }
                     .scrollClipDisabled()
-                }
+                    .overlay(alignment: .topLeading) {
+                        RowTitle(text: "My Teams", inset: 90)
+                    }
             } else {
                 Color.clear.frame(height: 1)
             }
@@ -728,9 +741,6 @@ private struct UpcomingFixturesRow: View {
                                 title: fixture.title,
                                 chips: [DayFormat.label(fixture.guideTime), DayFormat.time(fixture.guideTime)],
                                 overview: fixture.subtitle ?? ""))
-        }
-        .sheet(item: $selected) { fixture in
-            FixtureDetailView(fixture: fixture)
         }
     }
 }
@@ -749,27 +759,26 @@ private struct ProviderMoviesRow: View {
     var body: some View {
         Group {
             if !movies.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("From Your Provider · Recently Added")
-                        .font(.title3).bold()
-                        .padding(.horizontal, 90)
-                    ScrollView(.horizontal) {
+                ScrollView(.horizontal) {
                         LazyHStack(alignment: .top, spacing: 40) {
                             ForEach(movies) { movie in
                                 Button {
                                     play(movie)
                                 } label: {
                                     ArtTile(imageURL: movie.icon.flatMap { URL(string: $0) }, title: movie.name)
+                                        .padding(.top, RowLayout.titleSpace)
                                 }
                                 .buttonStyle(PlainPressStyle())
                                 .focused($focusedID, equals: movie.id)
                             }
                         }
                         .padding(.horizontal, 90)
-                        .padding(.vertical, 30)
+                        .padding(.bottom, 30)
                     }
                     .scrollClipDisabled()
-                }
+                    .overlay(alignment: .topLeading) {
+                        RowTitle(text: "From Your Provider · Recently Added", inset: 90)
+                    }
             } else {
                 Color.clear.frame(height: 1)
             }
@@ -806,25 +815,24 @@ private struct ProviderSeriesRow: View {
     var body: some View {
         Group {
             if !series.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("From Your Provider · Recently Updated")
-                        .font(.title3).bold()
-                        .padding(.horizontal, 90)
-                    ScrollView(.horizontal) {
+                ScrollView(.horizontal) {
                         LazyHStack(alignment: .top, spacing: 40) {
                             ForEach(series) { show in
                                 NavigationLink(value: show) {
                                     ArtTile(imageURL: show.cover.flatMap { URL(string: $0) }, title: show.name)
+                                        .padding(.top, RowLayout.titleSpace)
                                 }
                                 .buttonStyle(PlainPressStyle())
                                 .focused($focusedID, equals: show.id)
                             }
                         }
                         .padding(.horizontal, 90)
-                        .padding(.vertical, 30)
+                        .padding(.bottom, 30)
                     }
                     .scrollClipDisabled()
-                }
+                    .overlay(alignment: .topLeading) {
+                        RowTitle(text: "From Your Provider · Recently Updated", inset: 90)
+                    }
             } else {
                 Color.clear.frame(height: 1)
             }

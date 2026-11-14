@@ -60,10 +60,8 @@ Sources/
 6. Push again. The build uploads to TestFlight. Open the TestFlight app on the Apple TV,
    signed in with the same Apple ID, and install.
 
-**Before the first upload:** App Store Connect rejects tvOS builds without the layered
-app icon and top-shelf image assets. Add an `Assets.xcassets` with an
-"App Icon & Top Shelf Image" brand asset, then set
-`ASSETCATALOG_COMPILER_APPICON_NAME` in `project.yml`.
+The layered app icon and top-shelf images live in `Resources/Assets.xcassets`
+("App Icon & Top Shelf Image"), which App Store Connect requires for tvOS builds.
 
 ## First run on the TV
 
