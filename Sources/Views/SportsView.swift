@@ -8,192 +8,333 @@ struct SportsView: View {
     @State private var loading = false
     @State private var selected: Fixture?
 
-    private struct Day: Identifiable {
-        let date: Date
-        let fixtures: [Fixture]
-        var id: Date { date }
+    private var teams: [FavouriteTeam] { settings.prefs.favouriteTeams }
+    private var days: Int { settings.prefs.sportsDaysAhead }
+
+    private var loadKey: String {
+        teams.map(\.id).joined(separator: ",") + "|\(days)"
     }
 
-    private var favourites: [FavouriteTeam] { settings.prefs.favouriteTeams }
+    /// On today, or already under way.
+    private var today: [Fixture] {
+        fixtures.filter { Calendar.current.isDateInToday($0.guideTime) || $0.guideTime <= Date() }
+    }
 
-    private var days: [Day] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: fixtures) { calendar.startOfDay(for: $0.date) }
-        return grouped.keys.sorted().map { date in
-            Day(date: date, fixtures: grouped[date, default: []].sorted { $0.date < $1.date })
-        }
+    private var later: [Fixture] {
+        let todayIDs = Set(today.map(\.id))
+        return fixtures.filter { !todayIDs.contains($0.id) }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 40) {
-                    HStack {
-                        Text("Sports").font(.title2).bold()
-                        Spacer()
+                LazyVStack(alignment: .leading, spacing: 36) {
+                    HStack(spacing: 18) {
                         NavigationLink {
                             TeamsManagerView()
                         } label: {
-                            Label("My Teams", systemImage: "star")
+                            PillLabel(title: "My Teams", icon: "star")
                         }
+                        .buttonStyle(PlainPressStyle())
+
+                        Label("Next \(days) days · all competitions", systemImage: "calendar")
+                            .font(.system(size: 24, weight: .semibold))
+                            .padding(.horizontal, 26)
+                            .padding(.vertical, 14)
+                            .background(Theme.glass, in: Capsule())
                     }
                     .padding(.horizontal, 90)
                     .padding(.top, 20)
 
-                    if favourites.isEmpty {
+                    if teams.isEmpty {
                         message("Choose your teams with My Teams to see when they next play or race.")
                     } else if loading && fixtures.isEmpty {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .padding(.top, 60)
                     } else if fixtures.isEmpty {
-                        message("No upcoming fixtures found for your teams in the next 60 days.")
+                        message("No fixtures for your teams in the next \(days) days.")
                     }
 
-                    ForEach(days) { day in
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(DayFormat.label(day.date))
-                                .font(.title3).bold()
-                                .padding(.horizontal, 90)
-                            ScrollView(.horizontal) {
-                                LazyHStack(spacing: 40) {
-                                    ForEach(day.fixtures) { fixture in
-                                        Button {
-                                            selected = fixture
-                                        } label: {
-                                            FixtureCard(fixture: fixture)
-                                        }
-                                        .buttonStyle(.card)
-                                    }
+                    if !today.isEmpty {
+                        row("Today") {
+                            ForEach(today) { fixture in
+                                Button {
+                                    selected = fixture
+                                } label: {
+                                    FixtureTile(fixture: fixture, width: 480)
                                 }
-                                .padding(.horizontal, 90)
-                                .padding(.vertical, 30)
+                                .buttonStyle(PlainPressStyle())
                             }
-                            .scrollClipDisabled()
+                        }
+                    }
+
+                    if !later.isEmpty {
+                        row("Next \(days) days") {
+                            ForEach(later) { fixture in
+                                Button {
+                                    selected = fixture
+                                } label: {
+                                    UpcomingCard(fixture: fixture)
+                                }
+                                .buttonStyle(PlainPressStyle())
+                            }
+                        }
+                    }
+
+                    if !teams.isEmpty {
+                        row("My Teams") {
+                            ForEach(teams) { team in
+                                let next = fixtures.first { $0.followed.contains(team.name) }
+                                Button {
+                                    if let next { selected = next }
+                                } label: {
+                                    TeamTile(team: team, next: next)
+                                }
+                                .buttonStyle(PlainPressStyle())
+                            }
                         }
                     }
                 }
                 .padding(.bottom, 60)
             }
-            .task(id: favourites) { await load() }
+            .background(AppBackground())
+            .task(id: loadKey) { await load() }
             .sheet(item: $selected) { fixture in
                 FixtureDetailView(fixture: fixture)
             }
         }
     }
 
+    private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.title3).bold()
+                .padding(.horizontal, 90)
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: 40) {
+                    content()
+                }
+                .padding(.horizontal, 90)
+                .padding(.vertical, 30)
+            }
+            .scrollClipDisabled()
+        }
+    }
+
     private func message(_ text: String) -> some View {
         Text(text)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.white.opacity(0.7))
             .padding(.horizontal, 90)
-            .padding(.top, 40)
+            .padding(.top, 20)
     }
 
     private func load() async {
-        let teams = favourites
         guard !teams.isEmpty else {
             fixtures = []
             return
         }
         loading = true
-        defer { loading = false }
-
-        let espn = ESPNClient()
-        let f1Teams = teams.filter(\.isF1).map(\.name)
-        var found: [Fixture] = []
-
-        await withTaskGroup(of: [Fixture].self) { group in
-            for team in teams where !team.isF1 {
-                group.addTask { await espn.upcomingFixtures(for: team) }
-            }
-            if !f1Teams.isEmpty {
-                group.addTask {
-                    guard let race = try? await F1Client().nextRace(followed: f1Teams) else { return [] }
-                    return [race]
-                }
-            }
-            for await list in group { found += list }
-        }
-
-        // Two followed teams in the same match: show it once, naming both.
-        var merged: [String: Fixture] = [:]
-        for fixture in found {
-            if var existing = merged[fixture.id] {
-                existing.followed = Array(Set(existing.followed + fixture.followed)).sorted()
-                merged[fixture.id] = existing
-            } else {
-                merged[fixture.id] = fixture
-            }
-        }
-        let horizon = Date().addingTimeInterval(60 * 86_400)
-        fixtures = merged.values
-            .filter { $0.date <= horizon }
-            .sorted { $0.date < $1.date }
+        fixtures = await SportsLoader.upcoming(teams: teams, days: days)
+        loading = false
     }
 }
 
-// MARK: - Cards
+// MARK: - Fixture artwork and cards
 
-private struct TeamBadge: View {
-    let side: Fixture.Side?
+/// A team crest on a light disc, so dark logos stay visible on any colour.
+struct TeamLogo: View {
+    let url: String?
+    let size: CGFloat
 
     var body: some View {
-        VStack(spacing: 10) {
-            AsyncImage(url: side?.logo.flatMap { URL(string: $0) }) { image in
+        ZStack {
+            Circle().fill(Color.white.opacity(0.94))
+            AsyncImage(url: url.flatMap { URL(string: $0) }) { image in
                 image.resizable().aspectRatio(contentMode: .fit)
             } placeholder: {
-                Image(systemName: "shield").font(.largeTitle).foregroundStyle(.secondary)
+                Image(systemName: "shield.fill")
+                    .font(.system(size: size * 0.4))
+                    .foregroundStyle(Color.gray)
             }
-            .frame(width: 80, height: 80)
-            Text(side?.name ?? "TBC")
-                .font(.caption).bold()
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
+            .padding(size * 0.16)
         }
-        .frame(width: 200)
+        .frame(width: size, height: size)
     }
 }
 
-private struct FixtureCard: View {
+private struct DiagonalHalf: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.58, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.42, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// Two-tone artwork in the teams' colours with both crests (or a flag for a race).
+struct FixtureArt: View {
     let fixture: Fixture
 
+    private var homeColor: Color {
+        if fixture.isRace { return Color(red: 0.82, green: 0.1, blue: 0.1) }
+        return Color(hex: fixture.home?.color) ?? Color(red: 0.24, green: 0.3, blue: 0.42)
+    }
+
+    private var awayColor: Color {
+        if fixture.isRace { return Color(red: 0.12, green: 0.12, blue: 0.15) }
+        return Color(hex: fixture.away?.color) ?? Color(red: 0.13, green: 0.14, blue: 0.18)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(fixture.competition)
-                .font(.caption).bold()
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            if fixture.isRace {
-                HStack(spacing: 14) {
-                    Image(systemName: "flag.checkered").font(.title2)
-                    Text(fixture.title).font(.headline).lineLimit(2)
-                }
-                if let subtitle = fixture.subtitle {
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                }
-            } else {
-                HStack(alignment: .top, spacing: 8) {
-                    TeamBadge(side: fixture.home)
-                    Text("v").font(.headline).foregroundStyle(.secondary).padding(.top, 28)
-                    TeamBadge(side: fixture.away)
-                }
-                .frame(maxWidth: .infinity)
-            }
-
-            Spacer(minLength: 0)
-
-            HStack {
-                Label(DayFormat.time(fixture.isRace ? fixture.guideTime : fixture.date), systemImage: "clock")
-                    .font(.callout).bold()
-                Spacer()
-                if fixture.isRace, let next = fixture.sessions.first(where: { $0.date == fixture.guideTime }) {
-                    Text(next.name).font(.caption).foregroundStyle(.secondary)
+        GeometryReader { geo in
+            ZStack {
+                awayColor
+                Color.black.opacity(0.35)
+                DiagonalHalf().fill(homeColor)
+                if fixture.isRace {
+                    Image(systemName: "flag.checkered")
+                        .font(.system(size: geo.size.height * 0.34, weight: .bold))
+                        .foregroundStyle(Color.white)
+                } else {
+                    HStack(spacing: 0) {
+                        TeamLogo(url: fixture.home?.logo, size: geo.size.height * 0.46)
+                            .frame(maxWidth: .infinity)
+                        TeamLogo(url: fixture.away?.logo, size: geo.size.height * 0.46)
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             }
         }
-        .padding(26)
-        .frame(width: 560, height: 320, alignment: .topLeading)
+    }
+}
+
+/// A fixture as artwork with its title and time underneath.
+struct FixtureTile: View {
+    let fixture: Fixture
+    let width: CGFloat
+
+    private var isLive: Bool { fixture.guideTime <= Date() }
+
+    private var detail: String {
+        var parts = ["\(DayFormat.label(fixture.guideTime)) \(DayFormat.time(fixture.guideTime))"]
+        if let session = fixture.sessions.first(where: { $0.date == fixture.guideTime }) {
+            parts.append(session.name)
+        }
+        parts.append(fixture.competition)
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            FocusFrame(cornerRadius: 22) {
+                FixtureArt(fixture: fixture)
+                    .frame(width: width, height: width * 9 / 16)
+                    .overlay(alignment: .topLeading) {
+                        Text(isLive ? "LIVE" : DayFormat.time(fixture.guideTime))
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(isLive ? Theme.live : Color.black.opacity(0.5)))
+                            .padding(16)
+                    }
+            }
+            Text(fixture.title)
+                .font(.system(size: 26, weight: .bold))
+                .lineLimit(1)
+                .frame(width: width, alignment: .leading)
+            Text(detail)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(.white.opacity(0.65))
+                .lineLimit(1)
+                .frame(width: width, alignment: .leading)
+        }
+    }
+}
+
+/// A compact card for fixtures later in the window.
+private struct UpcomingCard: View {
+    let fixture: Fixture
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if fixture.isRace {
+                Image(systemName: "flag.checkered")
+                    .font(.system(size: 40, weight: .bold))
+                    .frame(height: 60)
+            } else {
+                HStack(spacing: -14) {
+                    TeamLogo(url: fixture.home?.logo, size: 60)
+                    TeamLogo(url: fixture.away?.logo, size: 60)
+                }
+            }
+            Text(DayFormat.label(fixture.guideTime).uppercased())
+                .font(.system(size: 18, weight: .bold))
+                .opacity(0.7)
+                .padding(.top, 6)
+            Text(fixture.title)
+                .font(.system(size: 26, weight: .bold))
+                .lineLimit(1)
+            Text("\(DayFormat.time(fixture.guideTime)) · \(fixture.competition)")
+                .font(.system(size: 20, weight: .medium))
+                .opacity(0.7)
+                .lineLimit(1)
+        }
+        .foregroundStyle(isFocused ? Theme.ink : Color.white)
+        .padding(24)
+        .frame(width: 420, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(isFocused ? Color.white : Theme.glass)
+        )
+        .scaleEffect(isFocused ? 1.04 : 1)
+        .animation(.easeOut(duration: 0.15), value: isFocused)
+    }
+}
+
+/// A followed team with its next fixture.
+private struct TeamTile: View {
+    let team: FavouriteTeam
+    let next: Fixture?
+
+    private var nextLine: String {
+        guard let next else { return "No fixture soon" }
+        return "Next: \(DayFormat.label(next.guideTime)) \(DayFormat.time(next.guideTime))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            FocusFrame {
+                ZStack {
+                    Rectangle().fill(Theme.glass)
+                    if team.isF1 {
+                        Image(systemName: "flag.checkered").font(.system(size: 60, weight: .bold))
+                    } else {
+                        AsyncImage(url: team.logo.flatMap { URL(string: $0) }) { image in
+                            image.resizable().aspectRatio(contentMode: .fit)
+                        } placeholder: {
+                            Image(systemName: "shield").font(.largeTitle)
+                        }
+                        .padding(26)
+                    }
+                }
+                .frame(width: 300, height: 170)
+            }
+            Text(team.name)
+                .font(.system(size: 22, weight: .bold))
+                .lineLimit(1)
+                .frame(width: 300, alignment: .leading)
+            Text(nextLine)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.white.opacity(0.65))
+                .lineLimit(1)
+                .frame(width: 300, alignment: .leading)
+        }
     }
 }
 
@@ -215,111 +356,123 @@ struct FixtureDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                Text(fixture.competition.uppercased())
-                    .font(.caption).bold()
-                    .foregroundStyle(.secondary)
-                Text(fixture.title)
-                    .font(.system(size: 56, weight: .bold))
-                    .lineLimit(2)
-                if let subtitle = fixture.subtitle {
-                    Text(subtitle).foregroundStyle(.secondary)
-                }
-                Text(fixture.date.formatted(date: .complete, time: .shortened))
-                    .font(.headline)
-                if !fixture.followed.isEmpty {
-                    Label("Following: " + fixture.followed.joined(separator: ", "), systemImage: "star.fill")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 30) {
+                HStack(alignment: .center, spacing: 36) {
+                    FixtureArt(fixture: fixture)
+                        .frame(width: 380, height: 214)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(fixture.title)
+                            .font(.system(size: 50, weight: .heavy))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.6)
+                        if let subtitle = fixture.subtitle {
+                            Text(subtitle)
+                                .font(.system(size: 24, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                        Text(fixture.competition)
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.7))
+                        Text(fixture.date.formatted(date: .complete, time: .shortened))
+                            .font(.system(size: 26, weight: .bold))
+                        if !fixture.followed.isEmpty {
+                            Label("Following: " + fixture.followed.joined(separator: ", "), systemImage: "star.fill")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
                 }
 
                 if fixture.isRace {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Weekend schedule").font(.title3).bold()
+                    GlassPanel("Weekend schedule") {
                         ForEach(fixture.sessions, id: \.self) { session in
                             HStack {
                                 Text(session.name)
                                 Spacer()
                                 Text(session.date.formatted(.dateTime.weekday(.abbreviated).day().month().hour().minute()))
-                                    .foregroundStyle(session.date < Date() ? Color.secondary : Color.primary)
                             }
-                            .font(.callout)
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(Color.white.opacity(session.date < Date() ? 0.5 : 1))
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 8)
                         }
                     }
-                    .frame(maxWidth: 1000)
+                }
+
+                GlassPanel("Watch") {
+                    guideSection
                 }
 
                 if !fixture.broadcasts.isEmpty {
                     Text("Listed broadcasters: " + fixture.broadcasts.joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .padding(.horizontal, 20)
                 }
-
-                Divider()
-
-                Text("Watch on your channels").font(.title3).bold()
-                guideSection
             }
-            .padding(80)
+            .frame(maxWidth: 1100)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 60)
         }
+        .background(AppBackground())
         .task { await search() }
         .fullScreenCover(item: $playback) { request in
             PlayerView(request: request).ignoresSafeArea()
         }
     }
 
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 24, weight: .medium))
+            .foregroundStyle(.white.opacity(0.7))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+    }
+
     @ViewBuilder
     private var guideSection: some View {
         if !settings.xtream.isConfigured {
-            Text("Add your IPTV login in Settings → Connections to find this in your TV guide.")
-                .foregroundStyle(.secondary)
+            note("Add your IPTV login in Settings → Connections to find this in your TV guide.")
         } else if tooFarAhead {
-            Text("It's not in your TV guide yet — guides usually only cover the next few days. Come back closer to the time.")
-                .foregroundStyle(.secondary)
+            note("It's not in your TV guide yet — guides usually only cover the next few days. Come back closer to the time.")
         } else if searching || !searched {
             ProgressView("Searching your TV guide…")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
         } else if matches.isEmpty {
-            Text("Couldn't find this in your TV guide yet. Listings can appear late — come back later.")
-                .foregroundStyle(.secondary)
+            note("Couldn't find this in your TV guide yet. Listings can appear late — come back later.")
         } else {
-            VStack(spacing: 12) {
-                ForEach(Array(matches.enumerated()), id: \.element.id) { index, match in
-                    Button {
-                        play(index)
-                    } label: {
-                        HStack(spacing: 24) {
-                            AsyncImage(url: match.channel.icon.flatMap { URL(string: $0) }) { image in
-                                image.resizable().aspectRatio(contentMode: .fit)
-                            } placeholder: {
-                                Image(systemName: "tv").font(.title2)
-                            }
-                            .frame(width: 110, height: 60)
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(match.channel.name).font(.headline).lineLimit(1)
-                                Text(programmeLine(match.programme))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            Image(systemName: "play.fill")
-                        }
-                        .padding(.vertical, 6)
-                    }
+            ForEach(Array(matches.enumerated()), id: \.element.id) { index, match in
+                Button {
+                    play(index)
+                } label: {
+                    ListRowLabel(title: match.channel.name,
+                                 subtitle: programmeLine(match.programme),
+                                 logoURL: match.channel.icon.flatMap { URL(string: $0) },
+                                 showsLogo: true,
+                                 trailing: "Tune in")
                 }
+                .buttonStyle(PlainPressStyle())
             }
         }
     }
 
     private func programmeLine(_ entry: XtreamEPGEntry) -> String {
         let times = [entry.start, entry.end].compactMap { $0 }.map(DayFormat.time).joined(separator: "–")
-        return times.isEmpty ? entry.title : "\(times)  \(entry.title)"
+        return times.isEmpty ? entry.title : "\(entry.title) · \(times)"
     }
 
     private func search() async {
         guard settings.xtream.isConfigured, !tooFarAhead, !searched else { return }
         searching = true
-        matches = await ChannelFinder.matches(for: fixture, client: settings.xtreamClient)
+        let prefs = settings.prefs
+        var extra = prefs.favouriteChannelIDs
+        for folder in prefs.folders { extra.formUnion(folder.channelIDs) }
+        matches = await ChannelFinder.matches(for: fixture, client: settings.xtreamClient,
+                                              hiddenCategories: prefs.hiddenCategoryIDs,
+                                              hiddenChannels: prefs.hiddenChannelIDs,
+                                              alwaysInclude: extra)
         searching = false
         searched = true
     }
@@ -343,55 +496,265 @@ struct FixtureDetailView: View {
 
 // MARK: - Choosing teams
 
+/// Which sport the team search is narrowed to.
+private enum SportFilter: String, CaseIterable, Identifiable {
+    case all, football, f1, rugby, nfl, nba, nhl, mlb
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .football: return "Football"
+        case .f1: return "Formula 1"
+        case .rugby: return "Rugby"
+        case .nfl: return "NFL"
+        case .nba: return "NBA"
+        case .nhl: return "NHL"
+        case .mlb: return "MLB"
+        }
+    }
+
+    func includes(_ result: TeamSearchResult) -> Bool {
+        switch self {
+        case .all: return true
+        case .football: return result.sport == "soccer"
+        case .f1: return result.sport == "f1"
+        case .rugby: return result.sport == "rugby"
+        case .nfl: return result.league == "nfl"
+        case .nba: return result.league == "nba"
+        case .nhl: return result.league == "nhl"
+        case .mlb: return result.league == "mlb"
+        }
+    }
+}
+
 struct TeamsManagerView: View {
     @EnvironmentObject var settings: AppSettings
 
-    var body: some View {
-        List {
-            Section {
-                if settings.prefs.favouriteTeams.isEmpty {
-                    Text("No teams yet. Add some below.").foregroundStyle(.secondary)
-                }
-                ForEach(settings.prefs.favouriteTeams) { team in
-                    TeamRow(name: team.name, detail: team.leagueName, logo: team.logo, isFavourite: true)
-                        .contextMenu {
-                            Button("Remove", role: .destructive) {
-                                settings.prefs.favouriteTeams.removeAll { $0.id == team.id }
-                            }
-                        }
-                }
-            } header: {
-                Text("My Teams")
-            } footer: {
-                Text("Long-press a team to remove it.")
-            }
+    @State private var query = ""
+    @State private var results: [TeamSearchResult] = []
+    @State private var searching = false
+    @State private var filter: SportFilter = .all
+    @State private var constructors: [F1Constructor] = []
+    @State private var leagueNames: [String: String] = [:]
+    @State private var removing: FavouriteTeam?
 
-            Section("Add teams") {
-                NavigationLink {
-                    FootballLeaguesView()
-                } label: {
-                    Label("Football", systemImage: "soccerball")
-                }
-                NavigationLink {
-                    F1TeamsView()
-                } label: {
-                    Label("Formula 1", systemImage: "flag.checkered")
-                }
-                NavigationLink {
-                    LeagueListView(title: "Rugby", leagues: SportsCatalog.rugby)
-                } label: {
-                    Label("Rugby", systemImage: "figure.rugby")
-                }
-                ForEach(SportsCatalog.us) { league in
-                    NavigationLink {
-                        TeamPickerView(league: league)
-                    } label: {
-                        Label(league.name, systemImage: "sportscourt")
+    private var trimmed: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var shownResults: [TeamSearchResult] {
+        results.filter { filter.includes($0) }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 40) {
+            ScrollView {
+                VStack(spacing: 24) {
+                    GlassPanel("Following · \(settings.prefs.favouriteTeams.count)") {
+                        if settings.prefs.favouriteTeams.isEmpty {
+                            Text("No teams yet. Search on the right to add some.")
+                                .font(.system(size: 22, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.7))
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                        }
+                        ForEach(settings.prefs.favouriteTeams) { team in
+                            Button {
+                                removing = team
+                            } label: {
+                                ListRowLabel(title: team.name,
+                                             subtitle: team.leagueName,
+                                             icon: team.isF1 ? "flag.checkered" : nil,
+                                             logoURL: team.logo.flatMap { URL(string: $0) },
+                                             showsLogo: !team.isF1)
+                            }
+                            .buttonStyle(PlainPressStyle())
+                        }
+                    }
+
+                    GlassPanel("Browse by league") {
+                        NavigationLink {
+                            FootballLeaguesView()
+                        } label: {
+                            ListRowLabel(title: "Football", icon: "soccerball", trailingIcon: "chevron.right")
+                        }
+                        .buttonStyle(PlainPressStyle())
+                        NavigationLink {
+                            F1TeamsView()
+                        } label: {
+                            ListRowLabel(title: "Formula 1", icon: "flag.checkered", trailingIcon: "chevron.right")
+                        }
+                        .buttonStyle(PlainPressStyle())
+                        NavigationLink {
+                            LeagueListView(title: "Rugby", leagues: SportsCatalog.rugby)
+                        } label: {
+                            ListRowLabel(title: "Rugby", icon: "figure.rugby", trailingIcon: "chevron.right")
+                        }
+                        .buttonStyle(PlainPressStyle())
+                        ForEach(SportsCatalog.us) { league in
+                            NavigationLink {
+                                TeamPickerView(league: league)
+                            } label: {
+                                ListRowLabel(title: league.name, icon: "sportscourt", trailingIcon: "chevron.right")
+                            }
+                            .buttonStyle(PlainPressStyle())
+                        }
                     }
                 }
+                .padding(.vertical, 30)
+            }
+            .frame(width: 600)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    TextField("Search every team — e.g. Porto, McLaren, Bath", text: $query)
+                        .autocorrectionDisabled()
+
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 12) {
+                            ForEach(SportFilter.allCases) { option in
+                                Button {
+                                    filter = option
+                                } label: {
+                                    PillLabel(title: option.label, selected: option == filter)
+                                }
+                                .buttonStyle(PlainPressStyle())
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .scrollClipDisabled()
+
+                    GlassPanel("Results") {
+                        if trimmed.count < 2 {
+                            hint("Type at least two letters to search football (every league), Formula 1, rugby, NFL, NBA, NHL and MLB.")
+                        } else if searching && results.isEmpty {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 20)
+                        } else if shownResults.isEmpty {
+                            hint("No teams found for “\(trimmed)”.")
+                        }
+                        ForEach(shownResults) { result in
+                            let following = isFollowing(result)
+                            Button {
+                                toggle(result)
+                            } label: {
+                                ListRowLabel(title: result.name,
+                                             subtitle: describe(result),
+                                             icon: result.sport == "f1" ? "flag.checkered" : nil,
+                                             logoURL: result.logo.flatMap { URL(string: $0) },
+                                             showsLogo: result.sport != "f1",
+                                             trailing: following ? "Following" : nil,
+                                             trailingIcon: following ? "checkmark" : "plus")
+                            }
+                            .buttonStyle(PlainPressStyle())
+                        }
+                    }
+                }
+                .padding(.vertical, 30)
             }
         }
-        .navigationTitle("My Teams")
+        .padding(.horizontal, 90)
+        .background(AppBackground())
+        .task { await loadNames() }
+        .task(id: trimmed) { await search() }
+        .confirmationDialog("Stop following \(removing?.name ?? "this team")?",
+                            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible) {
+            Button("Stop following", role: .destructive) {
+                if let removing {
+                    settings.prefs.favouriteTeams.removeAll { $0.id == removing.id }
+                }
+                removing = nil
+            }
+            Button("Cancel", role: .cancel) { removing = nil }
+        }
+    }
+
+    private func hint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 22, weight: .medium))
+            .foregroundStyle(.white.opacity(0.7))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+    }
+
+    // MARK: Data
+
+    private func loadNames() async {
+        if let leagues = try? await ESPNClient().footballLeagues() {
+            leagueNames = Dictionary(leagues.map { ($0.slug, $0.name) }, uniquingKeysWith: { first, _ in first })
+        }
+        constructors = (try? await F1Client().constructors()) ?? []
+    }
+
+    private func search() async {
+        let text = trimmed
+        guard text.count >= 2 else {
+            results = []
+            searching = false
+            return
+        }
+        searching = true
+        try? await Task.sleep(for: .milliseconds(400))
+        guard !Task.isCancelled else { return }
+
+        var found = (try? await ESPNClient().searchTeams(text)) ?? []
+        let racing = constructors
+            .filter { $0.name.localizedCaseInsensitiveContains(text) }
+            .map { TeamSearchResult(sport: "f1", league: "f1", teamID: $0.id, name: $0.name, logo: nil, color: nil) }
+        found = racing + found
+
+        guard !Task.isCancelled, text == trimmed else { return }
+        results = found
+        searching = false
+    }
+
+    private func leagueName(_ result: TeamSearchResult) -> String {
+        switch result.sport {
+        case "f1":
+            return "Formula 1"
+        case "soccer":
+            return leagueNames[result.league] ?? "Football"
+        case "rugby":
+            return SportsCatalog.rugby.first { $0.slug == result.league }?.name ?? "Rugby"
+        default:
+            return result.league.uppercased()
+        }
+    }
+
+    private func describe(_ result: TeamSearchResult) -> String {
+        let sport: String
+        switch result.sport {
+        case "f1": return "Formula 1"
+        case "soccer": sport = "Football"
+        case "rugby": sport = "Rugby"
+        case "football": sport = "American football"
+        case "basketball": sport = "Basketball"
+        case "hockey": sport = "Ice hockey"
+        case "baseball": sport = "Baseball"
+        default: sport = result.sport.capitalized
+        }
+        let league = leagueName(result)
+        return league == sport ? sport : "\(sport) · \(league)"
+    }
+
+    private func isFollowing(_ result: TeamSearchResult) -> Bool {
+        settings.prefs.favouriteTeams.contains { $0.sport == result.sport && $0.teamID == result.teamID }
+    }
+
+    private func toggle(_ result: TeamSearchResult) {
+        if isFollowing(result) {
+            settings.prefs.favouriteTeams.removeAll { $0.sport == result.sport && $0.teamID == result.teamID }
+        } else {
+            settings.prefs.favouriteTeams.append(FavouriteTeam(
+                sport: result.sport, league: result.league, leagueName: leagueName(result),
+                teamID: result.teamID, name: result.name, logo: result.logo, color: result.color
+            ))
+        }
     }
 }
 
@@ -511,7 +874,7 @@ private struct TeamPickerView: View {
         } else {
             settings.prefs.favouriteTeams.append(FavouriteTeam(
                 sport: league.sport, league: league.slug, leagueName: league.name,
-                teamID: team.id, name: team.displayName, logo: team.logoURL
+                teamID: team.id, name: team.displayName, logo: team.logoURL, color: team.color
             ))
         }
     }

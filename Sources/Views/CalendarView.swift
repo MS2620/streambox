@@ -1,11 +1,10 @@
 import SwiftUI
 
-/// Upcoming (and the last week's) episodes for the series in My List,
-/// grouped by day.
+/// New episodes of the series in My List: what's on today, then the next
+/// episode or two of each series. Nothing that has already aired.
 struct CalendarView: View {
     @EnvironmentObject var settings: AppSettings
     @State private var entries: [CalendarEntry] = []
-    @State private var returning: [TMDBItem] = []
     @State private var loading = false
 
     struct CalendarEntry: Identifiable, Hashable {
@@ -15,97 +14,91 @@ struct CalendarView: View {
         var id: String { "\(show.id)-\(episode.id)" }
     }
 
-    private struct Day: Identifiable {
-        let date: Date
-        let entries: [CalendarEntry]
-        var id: Date { date }
-    }
-
     private var series: [TMDBItem] {
         settings.prefs.myList.filter { $0.kind == .tv }
     }
 
-    private var days: [Day] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: entries) { calendar.startOfDay(for: $0.date) }
-        return grouped.keys.sorted().map { date in
-            Day(date: date, entries: grouped[date, default: []].sorted { $0.show.displayTitle < $1.show.displayTitle })
-        }
+    private var loadKey: String {
+        series.map { String($0.id) }.joined(separator: ",")
+            + "|\(settings.tmdbToken.count)|\(settings.prefs.calendarEpisodesPerSeries)|\(settings.prefs.calendarDaysAhead)"
+    }
+
+    private var today: [CalendarEntry] {
+        entries.filter { Calendar.current.isDateInToday($0.date) }
+    }
+
+    private var upcoming: [CalendarEntry] {
+        entries.filter { !Calendar.current.isDateInToday($0.date) }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 40) {
-                    Text("Calendar")
-                        .font(.title2).bold()
-                        .padding(.horizontal, 90)
-                        .padding(.top, 20)
+                LazyVStack(alignment: .leading, spacing: 36) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Calendar")
+                            .font(.system(size: 44, weight: .heavy))
+                        Text("New episodes from series in My List")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                    .padding(.horizontal, 90)
+                    .padding(.top, 20)
 
                     if settings.tmdbToken.isEmpty {
                         message("Add your TMDB token in Settings → Connections to see release dates.")
                     } else if series.isEmpty {
                         message("Add series to My List (the ＋ My List button on a series) to see when their new episodes come out.")
-                    } else if loading && entries.isEmpty && returning.isEmpty {
+                    } else if loading && entries.isEmpty {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .padding(.top, 60)
-                    } else if entries.isEmpty && returning.isEmpty {
+                    } else if entries.isEmpty {
                         message("No new episodes coming up for the series in My List.")
                     }
 
-                    ForEach(days) { day in
-                        daySection(day)
+                    if !today.isEmpty {
+                        row("Today", entries: today, showsDate: false)
                     }
-
-                    if !returning.isEmpty {
-                        RailView(title: "Returning — date not announced yet", items: returning)
+                    if !upcoming.isEmpty {
+                        row("Coming up", entries: upcoming, showsDate: true)
                     }
                 }
                 .padding(.bottom, 60)
             }
+            .background(AppBackground())
             .navigationDestination(for: TMDBItem.self) { item in
                 DetailView(item: item)
             }
-            .task(id: series.map(\.id) + [settings.tmdbToken.count]) { await load() }
+            .task(id: loadKey) { await load() }
         }
     }
 
     private func message(_ text: String) -> some View {
         Text(text)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.white.opacity(0.7))
             .padding(.horizontal, 90)
-            .padding(.top, 40)
+            .padding(.top, 20)
     }
 
-    private func daySection(_ day: Day) -> some View {
-        let isPast = day.date < Calendar.current.startOfDay(for: Date())
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 16) {
-                Text(DayFormat.label(day.date))
-                    .font(.title3).bold()
-                if isPast {
-                    Text("AIRED")
-                        .font(.caption).bold()
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 90)
-
+    private func row(_ title: String, entries: [CalendarEntry], showsDate: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.title3).bold()
+                .padding(.horizontal, 90)
             ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 44) {
-                    ForEach(day.entries) { entry in
+                LazyHStack(alignment: .top, spacing: 40) {
+                    ForEach(entries) { entry in
                         NavigationLink(value: entry.show) {
-                            CalendarEpisodeCard(entry: entry)
+                            CalendarEpisodeCard(entry: entry, showsDate: showsDate)
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(PlainPressStyle())
                     }
                 }
                 .padding(.horizontal, 90)
                 .padding(.vertical, 30)
             }
             .scrollClipDisabled()
-            .opacity(isPast ? 0.75 : 1)
         }
     }
 
@@ -114,43 +107,37 @@ struct CalendarView: View {
     private func load() async {
         guard !settings.tmdbToken.isEmpty, !series.isEmpty else {
             entries = []
-            returning = []
             return
         }
         loading = true
         defer { loading = false }
 
         let tmdb = settings.tmdb
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let from = calendar.date(byAdding: .day, value: -7, to: today) ?? today
-        let until = calendar.date(byAdding: .day, value: 90, to: today) ?? today
+        let perSeries = max(1, settings.prefs.calendarEpisodesPerSeries)
+        let today = Calendar.current.startOfDay(for: Date())
+        let until = Calendar.current.date(byAdding: .day, value: settings.prefs.calendarDaysAhead, to: today) ?? today
 
         var found: [CalendarEntry] = []
-        var noDate: [TMDBItem] = []
-
-        await withTaskGroup(of: ([CalendarEntry], TMDBItem?).self) { group in
+        await withTaskGroup(of: [CalendarEntry].self) { group in
             for show in series {
                 group.addTask {
-                    await Self.entries(for: show, tmdb: tmdb, from: from, until: until)
+                    await Self.entries(for: show, tmdb: tmdb, from: today, until: until, limit: perSeries)
                 }
             }
-            for await (showEntries, returningShow) in group {
-                found += showEntries
-                if let returningShow { noDate.append(returningShow) }
-            }
+            for await list in group { found += list }
         }
 
-        entries = found.sorted { $0.date < $1.date }
-        returning = noDate.sorted { $0.displayTitle < $1.displayTitle }
+        entries = found.sorted { a, b in
+            a.date != b.date ? a.date < b.date : a.show.displayTitle < b.show.displayTitle
+        }
     }
 
-    /// Episodes of one series that air in the window, or the series itself
-    /// if it's returning without a date.
+    /// The next `limit` episodes of one series airing from today onwards.
     private static func entries(for show: TMDBItem, tmdb: TMDBClient,
-                                from: Date, until: Date) async -> ([CalendarEntry], TMDBItem?) {
-        guard let details = try? await tmdb.tvDetails(id: show.id) else { return ([], nil) }
+                                from: Date, until: Date, limit: Int) async -> [CalendarEntry] {
+        guard let details = try? await tmdb.tvDetails(id: show.id) else { return [] }
 
+        // TMDB moves today's episode to "last aired" on the day, so check both.
         var seasons = Set<Int>()
         if let next = details.nextEpisodeToAir {
             seasons.insert(next.seasonNumber)
@@ -159,6 +146,7 @@ struct CalendarView: View {
            let aired = DayFormat.parseDay(last.airDate), aired >= from {
             seasons.insert(last.seasonNumber)
         }
+        guard !seasons.isEmpty else { return [] }
 
         var result: [CalendarEntry] = []
         for season in seasons.sorted() {
@@ -170,42 +158,48 @@ struct CalendarView: View {
             }
         }
 
-        // A known next episode beyond the window still deserves a spot.
+        // If the season list had no dates, fall back to the next episode itself.
         if result.isEmpty, let next = details.nextEpisodeToAir,
-           let date = DayFormat.parseDay(next.airDate) {
+           let date = DayFormat.parseDay(next.airDate), date >= from, date <= until {
             result.append(CalendarEntry(show: show, episode: next, date: date))
         }
 
-        let isReturningWithoutDate = result.isEmpty
-            && details.nextEpisodeToAir == nil
-            && details.status == "Returning Series"
-        return (result, isReturningWithoutDate ? show : nil)
+        return Array(result.sorted { $0.date < $1.date }.prefix(limit))
     }
 }
 
 private struct CalendarEpisodeCard: View {
     let entry: CalendarView.CalendarEntry
+    let showsDate: Bool
+
+    private var detail: String {
+        let episode = "S\(entry.episode.seasonNumber) E\(entry.episode.episodeNumber)"
+        let name = entry.episode.name.map { " · \($0)" } ?? ""
+        return showsDate ? "\(episode) · \(DayFormat.label(entry.date))" : episode + name
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            AsyncImage(url: entry.episode.stillURL ?? entry.show.backdropURL) { image in
-                image.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: {
-                ZStack {
-                    Color.gray.opacity(0.3)
-                    Image(systemName: "tv").font(.largeTitle)
+            FocusFrame(cornerRadius: 20) {
+                AsyncImage(url: entry.episode.stillURL ?? entry.show.backdropURL) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    ZStack {
+                        Color.gray.opacity(0.3)
+                        Image(systemName: "tv").font(.largeTitle)
+                    }
                 }
+                .frame(width: 440, height: 248)
+                .clipped()
             }
-            .frame(width: 440, height: 248)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
             Text(entry.show.displayTitle)
-                .font(.callout).bold()
+                .font(.system(size: 24, weight: .bold))
                 .lineLimit(1)
 
-            Text("S\(entry.episode.seasonNumber) E\(entry.episode.episodeNumber) · \(entry.episode.name ?? "Episode \(entry.episode.episodeNumber)")")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(detail)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(.white.opacity(0.65))
                 .lineLimit(1)
         }
         .frame(width: 440, alignment: .leading)

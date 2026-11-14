@@ -1,0 +1,258 @@
+import SwiftUI
+
+/// Colours and small building blocks shared by every screen.
+enum Theme {
+    /// The page background that hero artwork fades into.
+    static let base = Color(red: 0.055, green: 0.065, blue: 0.09)
+    static let glass = Color.white.opacity(0.12)
+    static let glassStrong = Color.white.opacity(0.2)
+    static let ink = Color(red: 0.08, green: 0.08, blue: 0.1)
+    static let live = Color(red: 1, green: 0.3, blue: 0.3)
+}
+
+extension Color {
+    /// A colour from a hex string such as "da020e" or "#DA020E".
+    init?(hex: String?) {
+        guard var text = hex?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        if text.hasPrefix("#") { text.removeFirst() }
+        guard text.count == 6, let value = UInt32(text, radix: 16) else { return nil }
+        self.init(red: Double((value >> 16) & 0xFF) / 255,
+                  green: Double((value >> 8) & 0xFF) / 255,
+                  blue: Double(value & 0xFF) / 255)
+    }
+}
+
+/// The soft, frosted backdrop behind Live TV, Sports, Calendar, Search and Settings.
+struct AppBackground: View {
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        ZStack {
+            if settings.prefs.backgroundStyle == .frosted {
+                Color(red: 0.2, green: 0.24, blue: 0.31)
+                RadialGradient(colors: [Color(red: 0.62, green: 0.5, blue: 0.45).opacity(0.55), .clear],
+                               center: UnitPoint(x: 0.72, y: 0.3), startRadius: 0, endRadius: 900)
+                RadialGradient(colors: [Color(red: 0.35, green: 0.5, blue: 0.7).opacity(0.6), .clear],
+                               center: UnitPoint(x: 0.1, y: 0.15), startRadius: 0, endRadius: 800)
+                RadialGradient(colors: [Color(red: 0.55, green: 0.4, blue: 0.55).opacity(0.4), .clear],
+                               center: UnitPoint(x: 0.45, y: 0.95), startRadius: 0, endRadius: 800)
+                LinearGradient(colors: [.clear, Theme.base.opacity(0.5)], startPoint: .top, endPoint: .bottom)
+            } else {
+                Theme.base
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// A button style with no system chrome: the label draws its own focus state.
+struct PlainPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+/// Wraps card artwork: white outline, lift and shadow while focused.
+struct FocusFrame<Content: View>: View {
+    let cornerRadius: CGFloat
+    let content: Content
+    @Environment(\.isFocused) private var isFocused
+
+    init(cornerRadius: CGFloat = 18, @ViewBuilder content: () -> Content) {
+        self.cornerRadius = cornerRadius
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.white, lineWidth: isFocused ? 5 : 0)
+            )
+            .scaleEffect(isFocused ? 1.06 : 1)
+            .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: 20, y: 12)
+            .animation(.easeOut(duration: 0.15), value: isFocused)
+    }
+}
+
+/// A small rounded tag ("4K", "Drama", "★ 8.4").
+struct Chip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 20, weight: .semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(Theme.glassStrong, in: Capsule())
+    }
+}
+
+/// A rounded pill button label that turns white while focused.
+struct PillLabel: View {
+    let title: String
+    var icon: String? = nil
+    var selected = false
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let icon {
+                Image(systemName: icon).font(.system(size: 24, weight: .semibold))
+            }
+            Text(title).font(.system(size: 24, weight: .semibold)).lineLimit(1)
+        }
+        .foregroundStyle(isFocused ? Theme.ink : Color.white)
+        .padding(.horizontal, 26)
+        .padding(.vertical, 14)
+        .background(
+            Capsule().fill(isFocused ? Color.white : (selected ? Theme.glassStrong : Theme.glass))
+        )
+        .scaleEffect(isFocused ? 1.04 : 1)
+        .animation(.easeOut(duration: 0.15), value: isFocused)
+    }
+}
+
+/// A glass card that groups rows, with an optional small uppercase header.
+struct GlassPanel<Content: View>: View {
+    let title: String?
+    let content: Content
+
+    init(_ title: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let title {
+                Text(title.uppercased())
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 6)
+            }
+            content
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 18)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 34, style: .continuous).fill(Theme.glass))
+        .overlay(RoundedRectangle(cornerRadius: 34, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
+    }
+}
+
+/// A list row inside a glass panel: optional icon or logo, title, subtitle and
+/// a trailing note. The whole row turns white while focused.
+struct ListRowLabel: View {
+    let title: String
+    var subtitle: String? = nil
+    var icon: String? = nil
+    var logoURL: URL? = nil
+    var showsLogo = false
+    var trailing: String? = nil
+    var trailingIcon: String? = nil
+    var selected = false
+    var dimmed = false
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        HStack(spacing: 18) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 26, weight: .semibold))
+                    .frame(width: 36)
+            }
+            if showsLogo {
+                AsyncImage(url: logoURL) { image in
+                    image.resizable().aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 6).fill(Theme.glassStrong)
+                }
+                .frame(width: 70, height: 42)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 26, weight: .semibold))
+                    .lineLimit(1)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 20, weight: .medium))
+                        .opacity(0.7)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 12)
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 22, weight: .medium))
+                    .opacity(0.7)
+                    .lineLimit(1)
+            }
+            if let trailingIcon {
+                Image(systemName: trailingIcon).font(.system(size: 24, weight: .semibold))
+            }
+        }
+        .foregroundStyle(isFocused ? Theme.ink : Color.white.opacity(dimmed ? 0.55 : 1))
+        .padding(.horizontal, 18)
+        .padding(.vertical, 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(isFocused ? Color.white : (selected ? Theme.glassStrong : Color.clear))
+        )
+        .animation(.easeOut(duration: 0.12), value: isFocused)
+    }
+}
+
+/// A thin progress bar.
+struct ThinProgress: View {
+    let fraction: Double
+    var tint: Color = .white
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(tint.opacity(0.25))
+                Capsule().fill(tint).frame(width: geo.size.width * min(max(fraction, 0), 1))
+            }
+        }
+        .frame(height: 8)
+    }
+}
+
+/// A sheet that asks for a short name (new folder, rename).
+struct NameSheet: View {
+    let title: String
+    let onSave: (String) -> Void
+    @State private var text: String
+    @Environment(\.dismiss) private var dismiss
+
+    init(title: String, initial: String = "", onSave: @escaping (String) -> Void) {
+        self.title = title
+        self.onSave = onSave
+        self._text = State(initialValue: initial)
+    }
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(spacing: 40) {
+            Text(title).font(.title2).bold()
+            TextField("Name", text: $text)
+                .frame(maxWidth: 900)
+            HStack(spacing: 40) {
+                Button("Save") {
+                    onSave(trimmed)
+                    dismiss()
+                }
+                .disabled(trimmed.isEmpty)
+                Button("Cancel", role: .cancel) { dismiss() }
+            }
+        }
+        .padding(80)
+    }
+}

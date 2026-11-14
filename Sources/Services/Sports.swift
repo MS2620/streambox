@@ -13,6 +13,8 @@ struct FavouriteTeam: Codable, Hashable, Identifiable {
     let teamID: String
     let name: String
     let logo: String?
+    /// Team colour as hex ("da020e"), when ESPN gives one.
+    var color: String? = nil
 
     var id: String { "\(sport)/\(league)/\(teamID)" }
     var isF1: Bool { sport == "f1" }
@@ -62,6 +64,7 @@ struct Fixture: Identifiable, Hashable {
         let id: String
         let name: String
         let logo: String?
+        var color: String? = nil
     }
 
     struct Session: Hashable {
@@ -149,9 +152,10 @@ struct ESPNTeam: Decodable, Hashable {
     let shortDisplayName: String?
     let location: String?
     let logoURL: String?
+    let color: String?
 
     private enum CodingKeys: String, CodingKey {
-        case id, displayName, shortDisplayName, name, location, logo, logos
+        case id, displayName, shortDisplayName, name, location, logo, logos, color
     }
 
     private struct Logo: Decodable { let href: String? }
@@ -165,6 +169,7 @@ struct ESPNTeam: Decodable, Hashable {
         location = try? c.decode(String.self, forKey: .location)
         let logos = try? c.decode([Logo].self, forKey: .logos)
         logoURL = logos?.compactMap(\.href).first ?? (try? c.decode(String.self, forKey: .logo))
+        color = try? c.decode(String.self, forKey: .color)
     }
 
     /// Lower-cased names to look for in guide listings ("man united", "liverpool").
@@ -239,12 +244,19 @@ private struct ESPNEvent: Decodable {
         let type: StatusType?
     }
 
+    /// Present on "all competitions" schedules: which competition this game is in.
+    struct League: Decodable {
+        let name: String?
+        let slug: String?
+    }
+
     let id: String
     let date: String
     let name: String?
     let competitions: [Competition]?
+    let league: League?
 
-    private enum CodingKeys: String, CodingKey { case id, date, name, competitions }
+    private enum CodingKeys: String, CodingKey { case id, date, name, competitions, league }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -252,7 +264,49 @@ private struct ESPNEvent: Decodable {
         date = (try? c.decode(String.self, forKey: .date)) ?? ""
         name = try? c.decode(String.self, forKey: .name)
         competitions = try? c.decode([Competition].self, forKey: .competitions)
+        league = try? c.decode(League.self, forKey: .league)
     }
+}
+
+/// A team found by searching ESPN (or an F1 constructor).
+struct TeamSearchResult: Identifiable, Hashable {
+    let sport: String
+    let league: String
+    let teamID: String
+    let name: String
+    let logo: String?
+    let color: String?
+
+    var id: String { "\(sport)/\(teamID)" }
+}
+
+private struct ESPNSearchResponse: Decodable {
+    struct Item: Decodable {
+        struct Logo: Decodable { let href: String? }
+        let id: String?
+        let displayName: String?
+        let sport: String?
+        let league: String?
+        let defaultLeagueSlug: String?
+        let color: String?
+        let logos: [Logo]?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, displayName, sport, league, defaultLeagueSlug, color, logos
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = c.flexString(.id)
+            displayName = try? c.decode(String.self, forKey: .displayName)
+            sport = try? c.decode(String.self, forKey: .sport)
+            league = c.flexString(.league)
+            defaultLeagueSlug = c.flexString(.defaultLeagueSlug)
+            color = try? c.decode(String.self, forKey: .color)
+            logos = try? c.decode([Logo].self, forKey: .logos)
+        }
+    }
+    let items: [Item]?
 }
 
 struct ESPNClient {
@@ -290,43 +344,112 @@ struct ESPNClient {
         return teams.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
-    /// The team's next fixtures. Tries the team schedule first; rugby's team
-    /// schedule isn't available, so it falls back to the league scoreboard.
-    func upcomingFixtures(for team: FavouriteTeam, limit: Int = 3) async -> [Fixture] {
-        let league = "/sports/\(team.sport)/\(team.league)"
-        let fixtureParameter = (team.sport == "soccer" || team.sport == "rugby") ? "?fixture=true" : ""
-        let paths = [
-            "\(league)/teams/\(team.teamID)/schedule\(fixtureParameter)",
-            "\(league)/scoreboard?dates=\(SportsDate.rangeParameter(days: 60))&limit=300",
-            "\(league)/scoreboard",
+    /// Sports the app can show fixtures for, as ESPN names them.
+    static let supportedSports: Set<String> = ["soccer", "football", "basketball", "hockey", "baseball", "rugby"]
+
+    /// Searches every team ESPN knows, across sports and leagues.
+    func searchTeams(_ query: String) async throws -> [TeamSearchResult] {
+        guard var components = URLComponents(string: "https://site.web.api.espn.com/apis/common/v3/search") else {
+            throw URLError(.badURL)
+        }
+        components.queryItems = [
+            URLQueryItem(name: "query", value: query),
+            URLQueryItem(name: "type", value: "team"),
+            URLQueryItem(name: "limit", value: "30"),
         ]
-        let cutoff = Date().addingTimeInterval(-3 * 3600)
+        guard let url = components.url else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        let data = try await URLSession.shared.fetch(request)
+        let response = try JSONDecoder().decode(ESPNSearchResponse.self, from: data)
+
+        var seen = Set<String>()
+        return (response.items ?? []).compactMap { item -> TeamSearchResult? in
+            guard let id = item.id, let name = item.displayName, let sport = item.sport,
+                  Self.supportedSports.contains(sport) else { return nil }
+            let league = item.defaultLeagueSlug ?? item.league ?? ""
+            // US sports need the league to look up a schedule.
+            if league.isEmpty && sport != "soccer" && sport != "rugby" { return nil }
+            let result = TeamSearchResult(sport: sport, league: league, teamID: id, name: name,
+                                          logo: item.logos?.compactMap(\.href).first, color: item.color)
+            return seen.insert(result.id).inserted ? result : nil
+        }
+    }
+
+    /// A team's fixtures in the next `days`, in every competition it plays in.
+    /// (Rugby is handled by `rugbyFixtures`, which reads league fixture lists.)
+    func upcomingFixtures(for team: FavouriteTeam, days: Int) async -> [Fixture] {
+        let league = "/sports/\(team.sport)/\(team.league)"
+        var paths: [String] = []
+        if team.sport == "soccer" {
+            // "all" returns league, cup, European and international games together.
+            paths.append("/sports/soccer/all/teams/\(team.teamID)/schedule?fixture=true")
+            if !team.league.isEmpty {
+                paths.append("\(league)/teams/\(team.teamID)/schedule?fixture=true")
+            }
+        } else {
+            paths.append("\(league)/teams/\(team.teamID)/schedule")
+            paths.append("\(league)/scoreboard?dates=\(SportsDate.rangeParameter(days: days))&limit=300")
+        }
 
         for path in paths {
             guard let response = try? await fetch(ESPNEventsResponse.self, path) else { continue }
-            let fixtures = (response.events ?? [])
-                .compactMap { fixture(from: $0, team: team) }
-                .filter { $0.date > cutoff }
-                .sorted { $0.date < $1.date }
-            if !fixtures.isEmpty {
-                return Array(fixtures.prefix(limit))
-            }
+            let fixtures = Self.window((response.events ?? []).compactMap { fixture(from: $0, teams: [team]) }, days: days)
+            if !fixtures.isEmpty { return fixtures }
         }
         return []
     }
 
-    private func fixture(from event: ESPNEvent, team: FavouriteTeam) -> Fixture? {
+    /// Fixtures for followed rugby teams, from every rugby competition's fixture list.
+    func rugbyFixtures(for teams: [FavouriteTeam], days: Int) async -> [Fixture] {
+        guard !teams.isEmpty else { return [] }
+        var found: [Fixture] = []
+        await withTaskGroup(of: [Fixture].self) { group in
+            for league in SportsCatalog.rugby {
+                group.addTask {
+                    let base = "/sports/rugby/\(league.slug)/scoreboard"
+                    let paths = ["\(base)?dates=\(SportsDate.rangeParameter(days: days))&limit=200", base]
+                    for path in paths {
+                        guard let response = try? await self.fetch(ESPNEventsResponse.self, path) else { continue }
+                        let events = response.events ?? []
+                        if events.isEmpty { continue }
+                        return events.compactMap { self.fixture(from: $0, teams: teams, competition: league.name) }
+                    }
+                    return []
+                }
+            }
+            for await list in group { found += list }
+        }
+        return Self.window(found, days: days)
+    }
+
+    /// Keeps fixtures from 3 hours ago (still on) up to `days` ahead, soonest first.
+    private static func window(_ fixtures: [Fixture], days: Int) -> [Fixture] {
+        let from = Date().addingTimeInterval(-3 * 3600)
+        let until = Date().addingTimeInterval(TimeInterval(days) * 86_400)
+        return fixtures.filter { $0.date > from && $0.date <= until }.sorted { $0.date < $1.date }
+    }
+
+    /// Builds a fixture if any of `teams` is playing in the event.
+    private func fixture(from event: ESPNEvent, teams: [FavouriteTeam], competition fallback: String? = nil) -> Fixture? {
         guard let competition = event.competitions?.first,
               let competitors = competition.competitors,
-              competitors.contains(where: { $0.team?.id == team.teamID }),
               let date = SportsDate.parse(event.date) else { return nil }
+        let playing = teams.filter { team in competitors.contains { $0.team?.id == team.teamID } }
+        guard let first = playing.first else { return nil }
         // Skip finished games.
         if competition.status?.type?.state == "post" { return nil }
 
+        func side(_ team: ESPNTeam) -> Fixture.Side {
+            let followed = playing.first { $0.teamID == team.id }
+            return Fixture.Side(id: team.id, name: team.displayName,
+                                logo: team.logoURL ?? followed?.logo,
+                                color: team.color ?? followed?.color)
+        }
         let homeTeam = competitors.first { $0.homeAway == "home" }?.team ?? competitors.first?.team
         let awayTeam = competitors.first { $0.homeAway == "away" }?.team ?? competitors.last?.team
-        let home = homeTeam.map { Fixture.Side(id: $0.id, name: $0.displayName, logo: $0.logoURL) }
-        let away = awayTeam.map { Fixture.Side(id: $0.id, name: $0.displayName, logo: $0.logoURL) }
+        let home = homeTeam.map(side)
+        let away = awayTeam.map(side)
 
         var broadcasts: [String] = []
         for broadcast in competition.broadcasts ?? [] {
@@ -336,16 +459,57 @@ struct ESPNClient {
 
         let title = [home?.name, away?.name].compactMap { $0 }.joined(separator: " v ")
         return Fixture(
-            id: "\(team.sport)-\(event.id)",
+            id: "\(first.sport)-\(event.id)",
             date: date,
-            competition: team.leagueName,
+            competition: event.league?.name ?? fallback ?? first.leagueName,
             title: title.isEmpty ? (event.name ?? "Match") : title,
             home: home,
             away: away,
             broadcasts: Array(Set(broadcasts)).sorted(),
             keywords: Array(Set((homeTeam?.keywords ?? []) + (awayTeam?.keywords ?? []))),
-            followed: [team.name]
+            followed: playing.map(\.name)
         )
+    }
+}
+
+/// Loads every followed team's upcoming fixtures in one go.
+enum SportsLoader {
+    static func upcoming(teams: [FavouriteTeam], days: Int) async -> [Fixture] {
+        guard !teams.isEmpty else { return [] }
+        let espn = ESPNClient()
+        let rugby = teams.filter { $0.sport == "rugby" }
+        let f1Names = teams.filter(\.isF1).map(\.name)
+        var found: [Fixture] = []
+
+        await withTaskGroup(of: [Fixture].self) { group in
+            for team in teams where !team.isF1 && team.sport != "rugby" {
+                group.addTask { await espn.upcomingFixtures(for: team, days: days) }
+            }
+            if !rugby.isEmpty {
+                group.addTask { await espn.rugbyFixtures(for: rugby, days: days) }
+            }
+            if !f1Names.isEmpty {
+                group.addTask {
+                    guard let race = try? await F1Client().nextRace(followed: f1Names) else { return [] }
+                    // Show the weekend once its first session is inside the window.
+                    let starts = race.sessions.first?.date ?? race.date
+                    return starts <= Date().addingTimeInterval(TimeInterval(days) * 86_400) ? [race] : []
+                }
+            }
+            for await list in group { found += list }
+        }
+
+        // Two followed teams in the same match: show it once, naming both.
+        var merged: [String: Fixture] = [:]
+        for fixture in found {
+            if var existing = merged[fixture.id] {
+                existing.followed = Array(Set(existing.followed + fixture.followed)).sorted()
+                merged[fixture.id] = existing
+            } else {
+                merged[fixture.id] = fixture
+            }
+        }
+        return merged.values.sorted { $0.date != $1.date ? $0.date < $1.date : $0.id < $1.id }
     }
 }
 
@@ -502,15 +666,27 @@ enum ChannelFinder {
     ]
 
     /// Searches the provider's guide for listings of this fixture at its time.
-    static func matches(for fixture: Fixture, client: XtreamClient) async -> [ChannelMatch] {
+    /// - Parameters:
+    ///   - hiddenCategories / hiddenChannels: groups and channels the user hid; never searched.
+    ///   - alwaysInclude: channels to search even if they don't look like sports channels
+    ///     (the user's favourites and folder channels).
+    static func matches(for fixture: Fixture, client: XtreamClient,
+                        hiddenCategories: Set<String> = [], hiddenChannels: Set<Int> = [],
+                        alwaysInclude: Set<Int> = []) async -> [ChannelMatch] {
         let cache = XtreamCache.shared
-        guard let streams = try? await cache.liveStreams(client) else { return [] }
+        guard let all = try? await cache.liveStreams(client) else { return [] }
+        let streams = all.filter { channel in
+            if hiddenChannels.contains(channel.id) { return false }
+            if let category = channel.categoryID, hiddenCategories.contains(category) { return false }
+            return true
+        }
         let categories = (try? await cache.liveCategories(client)) ?? []
 
         let sportCategories = Set(categories
             .filter { category in sportWords.contains { category.name.lowercased().contains($0) } }
             .map(\.id))
         var candidates = streams.filter { channel in
+            if alwaysInclude.contains(channel.id) { return true }
             if let category = channel.categoryID, sportCategories.contains(category) { return true }
             let name = channel.name.lowercased()
             return sportWords.contains { name.contains($0) }

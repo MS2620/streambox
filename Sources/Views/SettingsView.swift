@@ -1,34 +1,36 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject var settings: AppSettings
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 34) {
-                    Text("Settings")
-                        .font(.title2).bold()
-                        .padding(.top, 20)
-
-                    SettingsGroup("Media") {
-                        SettingsRow("Connections", icon: "link") { AccountsSettingsView() }
-                        SettingsRow("Live TV", icon: "antenna.radiowaves.left.and.right") { LiveTVSettingsView() }
-                        SettingsRow("Streams", icon: "list.bullet.rectangle") { StreamSettingsView() }
-                        SettingsRow("Content", icon: "arrow.triangle.2.circlepath") { ContentSettingsView() }
-                    }
-
-                    SettingsGroup("Playback") {
-                        SettingsRow("Player", icon: "play.rectangle") { PlayerSettingsView() }
-                        SettingsRow("Subtitles", icon: "captions.bubble") { SubtitleSettingsView() }
-                    }
-
-                    SettingsGroup("About") {
-                        SettingsInfoRow("Version", icon: "info.circle", value: Self.version)
-                        SettingsInfoRow("Player engine", icon: "cpu", value: "AetherEngine")
-                    }
+            SettingsPage("Settings") {
+                GlassPanel("Media") {
+                    SettingsLinkRow("Connections", icon: "link") { AccountsSettingsView() }
+                    SettingsLinkRow("Live TV & Guide", icon: "antenna.radiowaves.left.and.right",
+                                    value: settings.prefs.liveLayout.label) { LiveTVSettingsView() }
+                    SettingsLinkRow("Content", icon: "square.stack.3d.up") { ContentSettingsView() }
+                    SettingsLinkRow("Streams", icon: "list.bullet.rectangle") { StreamSettingsView() }
                 }
-                .frame(maxWidth: 1100)
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 60)
+
+                GlassPanel("Playback") {
+                    SettingsLinkRow("Player", icon: "play.rectangle") { PlayerSettingsView() }
+                    SettingsLinkRow("Subtitles", icon: "captions.bubble") { SubtitleSettingsView() }
+                }
+
+                GlassPanel("Personalise") {
+                    SettingsLinkRow("Home screen", icon: "house") { HomeScreenSettingsView() }
+                    SettingsLinkRow("Appearance", icon: "paintbrush",
+                                    value: settings.prefs.backgroundStyle.label) { AppearanceSettingsView() }
+                    SettingsLinkRow("Sports", icon: "sportscourt") { SportsSettingsView() }
+                    SettingsLinkRow("Calendar", icon: "calendar") { CalendarSettingsView() }
+                }
+
+                GlassPanel("About") {
+                    SettingsInfoRow("Version", icon: "info.circle", value: Self.version)
+                    SettingsInfoRow("Player engine", icon: "cpu", value: "AetherEngine")
+                }
             }
         }
     }
@@ -41,10 +43,10 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Grouped card components
+// MARK: - Building blocks
 
-/// A rounded card with a small uppercase header, like tvOS / NOWseen settings.
-struct SettingsGroup<Content: View>: View {
+/// A settings page: frosted background, a title and a centred column of panels.
+struct SettingsPage<Content: View>: View {
     let title: String
     let content: Content
 
@@ -54,34 +56,34 @@ struct SettingsGroup<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.caption).bold()
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 28)
-                .padding(.top, 20)
-                .padding(.bottom, 6)
-            VStack(spacing: 2) {
-                content
+        ZStack {
+            AppBackground()
+            ScrollView {
+                VStack(spacing: 30) {
+                    Text(title)
+                        .font(.system(size: 44, weight: .heavy))
+                        .padding(.top, 10)
+                    content
+                }
+                .frame(maxWidth: 1100)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 80)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 34, style: .continuous).fill(.white.opacity(0.1)))
-        .overlay(RoundedRectangle(cornerRadius: 34, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
     }
 }
 
-/// A row that opens a settings page.
-struct SettingsRow<Destination: View>: View {
+/// A row that opens another settings page.
+struct SettingsLinkRow<Destination: View>: View {
     let title: String
     let icon: String
+    let value: String?
     let destination: Destination
 
-    init(_ title: String, icon: String, @ViewBuilder destination: () -> Destination) {
+    init(_ title: String, icon: String, value: String? = nil, @ViewBuilder destination: () -> Destination) {
         self.title = title
         self.icon = icon
+        self.value = value
         self.destination = destination()
     }
 
@@ -89,9 +91,9 @@ struct SettingsRow<Destination: View>: View {
         NavigationLink {
             destination
         } label: {
-            SettingsRowLabel(title: title, icon: icon, trailing: nil, showsChevron: true)
+            ListRowLabel(title: title, icon: icon, trailing: value, trailingIcon: "chevron.right")
         }
-        .buttonStyle(SettingsRowStyle())
+        .buttonStyle(PlainPressStyle())
     }
 }
 
@@ -109,71 +111,46 @@ struct SettingsInfoRow: View {
 
     var body: some View {
         Button {} label: {
-            SettingsRowLabel(title: title, icon: icon, trailing: value, showsChevron: false)
+            ListRowLabel(title: title, icon: icon, trailing: value)
         }
-        .buttonStyle(SettingsRowStyle())
+        .buttonStyle(PlainPressStyle())
     }
 }
 
-private struct SettingsRowStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-    }
-}
-
-private struct SettingsRowLabel: View {
+/// An on/off row. Selecting it flips the setting.
+struct SettingsToggleRow: View {
     let title: String
     let icon: String
-    let trailing: String?
-    let showsChevron: Bool
-    @Environment(\.isFocused) private var isFocused
+    @Binding var isOn: Bool
+
+    init(_ title: String, icon: String, isOn: Binding<Bool>) {
+        self.title = title
+        self.icon = icon
+        self._isOn = isOn
+    }
 
     var body: some View {
-        HStack(spacing: 22) {
-            Image(systemName: icon)
-                .font(.system(size: 30, weight: .semibold))
-                .frame(width: 44)
-            Text(title)
-                .font(.system(size: 32, weight: .medium))
-            Spacer()
-            if let trailing {
-                Text(trailing)
-                    .font(.system(size: 28))
-                    .opacity(0.7)
-            }
-            if showsChevron {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 26, weight: .bold))
-                    .opacity(isFocused ? 1 : 0.6)
-            }
+        Button {
+            isOn.toggle()
+        } label: {
+            ListRowLabel(title: title, icon: icon, trailing: isOn ? "On" : "Off",
+                         trailingIcon: isOn ? "checkmark.circle.fill" : "circle")
         }
-        .foregroundStyle(isFocused ? Color.black : Color.white)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 18)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(isFocused ? Color.white : Color.clear)
-        )
-        .scaleEffect(isFocused ? 1.02 : 1)
-        .shadow(color: .black.opacity(isFocused ? 0.3 : 0), radius: 14, y: 6)
-        .animation(.easeOut(duration: 0.15), value: isFocused)
+        .buttonStyle(PlainPressStyle())
     }
 }
 
-// MARK: - Option picker
-
-/// A settings row: title on the left, current value on the right, and a
-/// pop-up menu of choices. Replaces Picker, whose tvOS styles either push a
-/// page (which broke navigation) or hide the title.
-struct OptionPicker<Value: Hashable>: View {
+/// A row with the current choice on the right. Selecting it lists the choices.
+struct SettingsOptionRow<Value: Hashable>: View {
     let title: String
+    let icon: String
     @Binding var selection: Value
     let options: [(Value, String)]
+    @State private var choosing = false
 
-    init(_ title: String, selection: Binding<Value>, options: [(Value, String)]) {
+    init(_ title: String, icon: String, selection: Binding<Value>, options: [(Value, String)]) {
         self.title = title
+        self.icon = icon
         self._selection = selection
         self.options = options
     }
@@ -183,35 +160,62 @@ struct OptionPicker<Value: Hashable>: View {
     }
 
     var body: some View {
-        Menu {
+        Button {
+            choosing = true
+        } label: {
+            ListRowLabel(title: title, icon: icon, trailing: currentLabel, trailingIcon: "chevron.up.chevron.down")
+        }
+        .buttonStyle(PlainPressStyle())
+        .confirmationDialog(title, isPresented: $choosing, titleVisibility: .visible) {
             ForEach(options.indices, id: \.self) { index in
-                let option = options[index]
-                Button {
-                    selection = option.0
-                } label: {
-                    if option.0 == selection {
-                        Label(option.1, systemImage: "checkmark")
-                    } else {
-                        Text(option.1)
-                    }
+                Button((options[index].0 == selection ? "✓ " : "") + options[index].1) {
+                    selection = options[index].0
                 }
             }
-        } label: {
-            HStack(spacing: 16) {
-                Text(title)
-                Spacer()
-                Text(currentLabel)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 }
 
-// MARK: - Accounts
+/// A row that does something when selected.
+struct SettingsActionRow: View {
+    let title: String
+    let icon: String
+    let value: String?
+    let action: () -> Void
+
+    init(_ title: String, icon: String, value: String? = nil, action: @escaping () -> Void) {
+        self.title = title
+        self.icon = icon
+        self.value = value
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            ListRowLabel(title: title, icon: icon, trailing: value)
+        }
+        .buttonStyle(PlainPressStyle())
+    }
+}
+
+/// Small explanatory text under a panel.
+struct SettingsNote: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 20, weight: .medium))
+            .foregroundStyle(.white.opacity(0.65))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, -14)
+    }
+}
+
+// MARK: - Connections
 
 struct AccountsSettingsView: View {
     @EnvironmentObject var settings: AppSettings
@@ -306,7 +310,7 @@ struct AccountsSettingsView: View {
     }
 }
 
-// MARK: - Live TV
+// MARK: - Live TV & Guide
 
 struct LiveTVSettingsView: View {
     @EnvironmentObject var settings: AppSettings
@@ -318,95 +322,497 @@ struct LiveTVSettingsView: View {
         Choice("IPTVSmartersPro", "IPTV Smarters"),
     ]
 
-    var body: some View {
-        Form {
-            Section {
-                OptionPicker("Stream format", selection: $settings.prefs.liveFormat,
-                             options: LiveStreamFormat.allCases.map { ($0, $0.label) })
-                OptionPicker("Channel switching", selection: $settings.prefs.channelSwitching,
-                             options: ChannelSwitching.allCases.map { ($0, $0.label) })
-                OptionPicker("Timeshift (pause & rewind)", selection: $settings.prefs.timeshiftMinutes,
-                             options: [(0, "Off"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours")])
-            } header: {
-                Text("Streaming")
-            } footer: {
-                Text("Try MPEG-TS if channels fail on HLS. Stable switching starts slower but buffers more. Timeshift keeps recent video on the Apple TV so you can pause and rewind live channels.")
-            }
+    private var userAgentOptions: [(String, String)] {
+        var options = Self.userAgentPresets.map { ($0.code, $0.name) }
+        let current = settings.prefs.iptvUserAgent
+        if !Self.userAgentPresets.contains(where: { $0.code == current }) {
+            options.append((current, "Custom"))
+        }
+        return options
+    }
 
-            Section("Channel list") {
-                Toggle("Show what's on now (EPG)", isOn: $settings.prefs.showEPG)
-                OptionPicker("Sort channels by", selection: $settings.prefs.channelSort,
-                             options: ChannelSort.allCases.map { ($0, $0.label) })
-                Toggle("Favourites at the top", isOn: $settings.prefs.favouritesFirst)
-                Toggle("Remember last category", isOn: $settings.prefs.rememberLastCategory)
-                NavigationLink("Show / hide categories") { HiddenCategoriesView() }
-                Button("Clear favourites (\(settings.prefs.favouriteChannelIDs.count))", role: .destructive) {
+    var body: some View {
+        SettingsPage("Live TV & Guide") {
+            GlassPanel("Layout") {
+                SettingsOptionRow("Default view", icon: "square.grid.2x2", selection: $settings.prefs.liveLayout,
+                                  options: LiveLayout.allCases.map { ($0, $0.label) })
+                SettingsOptionRow("Guide shows", icon: "clock", selection: $settings.prefs.guideHours,
+                                  options: [(1, "1 hour at a time"), (2, "2 hours at a time"), (3, "3 hours at a time")])
+                SettingsToggleRow("Live preview in the guide", icon: "play.tv", isOn: $settings.prefs.guidePreview)
+                SettingsToggleRow("Channel numbers", icon: "number", isOn: $settings.prefs.showChannelNumbers)
+            }
+            SettingsNote("The preview plays the highlighted channel, muted, in the corner of the guide. Turn it off if your provider only allows one connection at a time or zapping feels slow.")
+
+            GlassPanel("Channels") {
+                SettingsToggleRow("Show programme information (EPG)", icon: "text.justify.left", isOn: $settings.prefs.showEPG)
+                SettingsOptionRow("Sort channels by", icon: "arrow.up.arrow.down", selection: $settings.prefs.channelSort,
+                                  options: ChannelSort.allCases.map { ($0, $0.label) })
+                SettingsToggleRow("Favourites at the top", icon: "star", isOn: $settings.prefs.favouritesFirst)
+                SettingsToggleRow("Remember last group", icon: "arrow.uturn.backward", isOn: $settings.prefs.rememberLastCategory)
+                SettingsActionRow("Clear favourites", icon: "star.slash",
+                                  value: "\(settings.prefs.favouriteChannelIDs.count)") {
                     settings.prefs.favouriteChannelIDs.removeAll()
                 }
-                .disabled(settings.prefs.favouriteChannelIDs.isEmpty)
             }
+            SettingsNote("Hide groups and channels, or build your own folders, in Settings → Content.")
 
-            Section {
-                OptionPicker("User agent", selection: $settings.prefs.iptvUserAgent,
-                             options: Self.userAgentPresets.map { ($0.code, $0.name) }
-                                + (Self.userAgentPresets.contains { $0.code == settings.prefs.iptvUserAgent }
-                                   ? [] : [(settings.prefs.iptvUserAgent, "Custom")]))
+            GlassPanel("Streaming") {
+                SettingsOptionRow("Stream format", icon: "waveform", selection: $settings.prefs.liveFormat,
+                                  options: LiveStreamFormat.allCases.map { ($0, $0.label) })
+                SettingsOptionRow("Channel switching", icon: "hare", selection: $settings.prefs.channelSwitching,
+                                  options: ChannelSwitching.allCases.map { ($0, $0.label) })
+                SettingsOptionRow("Timeshift (pause & rewind)", icon: "gobackward", selection: $settings.prefs.timeshiftMinutes,
+                                  options: [(0, "Off"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours")])
+            }
+            SettingsNote("Try MPEG-TS if channels fail on HLS. Stable switching starts slower but buffers more. Timeshift keeps recent video on the Apple TV so you can pause and rewind live channels.")
+
+            GlassPanel("Provider compatibility") {
+                SettingsOptionRow("User agent", icon: "person.badge.key", selection: $settings.prefs.iptvUserAgent,
+                                  options: userAgentOptions)
                 TextField("Custom user agent", text: $settings.prefs.iptvUserAgent)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-            } header: {
-                Text("Provider compatibility")
-            } footer: {
-                Text("Some providers only allow certain players. Change this if your login works but channels don't.")
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
             }
+            SettingsNote("Some providers only allow certain players. Change this if your login works but channels don't.")
         }
-        .navigationTitle("Live TV")
     }
 }
 
-struct HiddenCategoriesView: View {
+// MARK: - Content
+
+struct ContentSettingsView: View {
     @EnvironmentObject var settings: AppSettings
-    @State private var categories: [XtreamCategory] = []
-    @State private var error: String?
+    @State private var refreshStatus: String?
+
+    private var hiddenSummary: String {
+        let groups = settings.prefs.hiddenCategoryIDs.count
+        let channels = settings.prefs.hiddenChannelIDs.count
+        if groups == 0 && channels == 0 { return "Nothing hidden" }
+        return "\(groups) groups, \(channels) channels hidden"
+    }
 
     var body: some View {
-        Form {
-            if let error {
-                Text(error).foregroundStyle(.secondary)
-            } else if categories.isEmpty {
-                ProgressView()
-            } else {
-                Section {
-                    Button("Show all") { settings.prefs.hiddenCategoryIDs.removeAll() }
-                    Button("Hide all") { settings.prefs.hiddenCategoryIDs = Set(categories.map(\.id)) }
+        SettingsPage("Content") {
+            GlassPanel("Live TV") {
+                SettingsLinkRow("Groups & channels", icon: "eye", value: hiddenSummary) {
+                    ChannelBrowser(mode: .visibility)
                 }
-                Section("Categories") {
-                    ForEach(categories) { category in
-                        Toggle(category.name, isOn: Binding(
-                            get: { !settings.prefs.hiddenCategoryIDs.contains(category.id) },
-                            set: { show in
-                                if show {
-                                    settings.prefs.hiddenCategoryIDs.remove(category.id)
-                                } else {
-                                    settings.prefs.hiddenCategoryIDs.insert(category.id)
-                                }
-                            }
-                        ))
+                SettingsLinkRow("My folders", icon: "folder.badge.plus",
+                                value: "\(settings.prefs.folders.count)") {
+                    FoldersSettingsView()
+                }
+            }
+            SettingsNote("Hide whole groups or single channels you never watch, and collect channels from any group into folders of your own. Folders appear at the top of Live TV.")
+
+            GlassPanel("TV guide data") {
+                SettingsOptionRow("Refresh guide", icon: "arrow.triangle.2.circlepath", selection: $settings.prefs.epgRefreshHours,
+                                  options: [(0, "Every time the app opens"), (1, "Every hour"), (3, "Every 3 hours"),
+                                            (6, "Every 6 hours"), (12, "Every 12 hours"), (24, "Once a day"),
+                                            (-1, "Only when I ask")])
+                SettingsActionRow("Refresh now", icon: "arrow.clockwise", value: refreshStatus) {
+                    refreshStatus = "Clearing…"
+                    Task {
+                        await XtreamCache.shared.clearGuide()
+                        refreshStatus = "Done — guide reloads when you open Live TV"
                     }
                 }
             }
+            SettingsNote("Guide data is kept on the Apple TV between refreshes, so the guide opens quickly and your provider is asked less often.")
+
+            GlassPanel("From your IPTV provider") {
+                SettingsToggleRow("Show provider movies", icon: "film", isOn: $settings.prefs.showProviderMovies)
+                SettingsToggleRow("Show provider series", icon: "play.tv", isOn: $settings.prefs.showProviderSeries)
+            }
+            SettingsNote("Adds the movie and series libraries that come with your IPTV login as extra rows on the Movies and Series tabs. Off by default.")
+
+            GlassPanel("Catalogue") {
+                SettingsOptionRow("Language", icon: "globe", selection: $settings.prefs.tmdbLanguage,
+                                  options: LanguageOptions.tmdb.map { ($0.code, $0.name) })
+                SettingsOptionRow("Region", icon: "mappin.and.ellipse", selection: $settings.prefs.tmdbRegion,
+                                  options: LanguageOptions.regions.map { ($0.code, $0.name) })
+            }
+            SettingsNote("Language of titles and descriptions, and the region used for cinema releases.")
         }
-        .navigationTitle("Categories")
+    }
+}
+
+// MARK: - Groups, channels and folder contents
+
+/// Two panes: groups on the left, the highlighted group's channels on the right.
+/// Used to hide groups and channels, and to pick channels for a folder.
+struct ChannelBrowser: View {
+    enum Mode: Equatable {
+        case visibility
+        case folder(String)
+    }
+
+    let mode: Mode
+    @EnvironmentObject var settings: AppSettings
+    @State private var categories: [XtreamCategory] = []
+    @State private var byGroup: [String: [XtreamChannel]] = [:]
+    @State private var currentGroup: String?
+    @State private var loading = true
+    @State private var error: String?
+    @FocusState private var focusedGroup: String?
+
+    private var prefs: Preferences { settings.prefs }
+
+    private var folderID: String? {
+        if case .folder(let id) = mode { return id }
+        return nil
+    }
+
+    private var folder: ChannelFolder? {
+        guard let folderID else { return nil }
+        return prefs.folders.first { $0.id == folderID }
+    }
+
+    private var title: String {
+        if let folder { return "Add to \(folder.name)" }
+        return "Groups & channels"
+    }
+
+    /// Picking for a folder only offers what isn't hidden.
+    private var shownGroups: [XtreamCategory] {
+        mode == .visibility ? categories : categories.filter { !prefs.hiddenCategoryIDs.contains($0.id) }
+    }
+
+    private var shownChannels: [XtreamChannel] {
+        let all = currentGroup.flatMap { byGroup[$0] } ?? []
+        return mode == .visibility ? all : all.filter { !prefs.hiddenChannelIDs.contains($0.id) }
+    }
+
+    var body: some View {
+        ZStack {
+            AppBackground()
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(spacing: 24) {
+                    Text(title)
+                        .font(.system(size: 44, weight: .heavy))
+                        .lineLimit(1)
+                    Spacer()
+                    if mode == .visibility {
+                        Button {
+                            settings.prefs.hiddenCategoryIDs.removeAll()
+                            settings.prefs.hiddenChannelIDs.removeAll()
+                        } label: {
+                            PillLabel(title: "Show everything", icon: "eye")
+                        }
+                        .buttonStyle(PlainPressStyle())
+                    }
+                }
+
+                if let error {
+                    Text(error).foregroundStyle(.white.opacity(0.7))
+                    Spacer()
+                } else if loading {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    HStack(alignment: .top, spacing: 30) {
+                        groupsPane.frame(width: 560)
+                        channelsPane.frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .padding(.top, 10)
+        }
+        .task { await load() }
+        .onChange(of: focusedGroup) { _, id in
+            if let id { currentGroup = id }
+        }
+    }
+
+    private var groupsPane: some View {
+        ScrollView {
+            LazyVStack(spacing: 4) {
+                ForEach(shownGroups) { group in
+                    let hidden = prefs.hiddenCategoryIDs.contains(group.id)
+                    Button {
+                        currentGroup = group.id
+                        if mode == .visibility { toggleGroup(group.id) }
+                    } label: {
+                        ListRowLabel(title: group.name,
+                                     subtitle: "\(byGroup[group.id]?.count ?? 0) channels",
+                                     trailing: mode == .visibility ? (hidden ? "Hidden" : nil) : nil,
+                                     trailingIcon: mode == .visibility ? (hidden ? "eye.slash" : "eye") : "chevron.right",
+                                     selected: group.id == currentGroup,
+                                     dimmed: hidden)
+                    }
+                    .buttonStyle(PlainPressStyle())
+                    .focused($focusedGroup, equals: group.id)
+                }
+            }
+            .padding(.vertical, 10)
+        }
+    }
+
+    private var channelsPane: some View {
+        let channels = shownChannels
+        let groupHidden = currentGroup.map { prefs.hiddenCategoryIDs.contains($0) } ?? false
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: 4) {
+                if mode == .visibility {
+                    if groupHidden {
+                        Text("This whole group is hidden. Select it on the left to show it again.")
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .padding(.horizontal, 18)
+                            .padding(.bottom, 8)
+                    } else if !channels.isEmpty {
+                        HStack(spacing: 14) {
+                            Button {
+                                settings.prefs.hiddenChannelIDs.subtract(channels.map(\.id))
+                            } label: {
+                                PillLabel(title: "Show all", icon: "eye")
+                            }
+                            .buttonStyle(PlainPressStyle())
+                            Button {
+                                settings.prefs.hiddenChannelIDs.formUnion(channels.map(\.id))
+                            } label: {
+                                PillLabel(title: "Hide all", icon: "eye.slash")
+                            }
+                            .buttonStyle(PlainPressStyle())
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 10)
+                    }
+                }
+
+                ForEach(channels) { channel in
+                    channelRow(channel, groupHidden: groupHidden)
+                }
+
+                if channels.isEmpty {
+                    Text("No channels in this group.")
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(18)
+                }
+            }
+            .padding(.vertical, 10)
+        }
+    }
+
+    @ViewBuilder
+    private func channelRow(_ channel: XtreamChannel, groupHidden: Bool) -> some View {
+        let logo = channel.icon.flatMap { URL(string: $0) }
+        if mode == .visibility {
+            let hidden = prefs.hiddenChannelIDs.contains(channel.id)
+            Button {
+                if hidden {
+                    settings.prefs.hiddenChannelIDs.remove(channel.id)
+                } else {
+                    settings.prefs.hiddenChannelIDs.insert(channel.id)
+                }
+            } label: {
+                ListRowLabel(title: channel.name, logoURL: logo, showsLogo: true,
+                             trailing: hidden ? "Hidden" : nil,
+                             trailingIcon: hidden ? "eye.slash" : "eye",
+                             dimmed: hidden || groupHidden)
+            }
+            .buttonStyle(PlainPressStyle())
+        } else {
+            let included = folder?.channelIDs.contains(channel.id) ?? false
+            Button {
+                toggleInFolder(channel.id)
+            } label: {
+                ListRowLabel(title: channel.name, logoURL: logo, showsLogo: true,
+                             trailing: included ? "In folder" : nil,
+                             trailingIcon: included ? "checkmark.circle.fill" : "circle")
+            }
+            .buttonStyle(PlainPressStyle())
+        }
+    }
+
+    private func toggleGroup(_ id: String) {
+        if settings.prefs.hiddenCategoryIDs.contains(id) {
+            settings.prefs.hiddenCategoryIDs.remove(id)
+        } else {
+            settings.prefs.hiddenCategoryIDs.insert(id)
+        }
+    }
+
+    private func toggleInFolder(_ channelID: Int) {
+        guard let folderID, let index = settings.prefs.folders.firstIndex(where: { $0.id == folderID }) else { return }
+        var folder = settings.prefs.folders[index]
+        if let position = folder.channelIDs.firstIndex(of: channelID) {
+            folder.channelIDs.remove(at: position)
+        } else {
+            folder.channelIDs.append(channelID)
+        }
+        settings.prefs.folders[index] = folder
+    }
+
+    private func load() async {
+        guard settings.xtream.isConfigured else {
+            error = "Add your IPTV login in Settings → Connections first."
+            loading = false
+            return
+        }
+        let client = settings.xtreamClient
+        do {
+            let groups = try await XtreamCache.shared.liveCategories(client)
+            let channels = try await XtreamCache.shared.liveStreams(client)
+            var grouped: [String: [XtreamChannel]] = [:]
+            for channel in channels {
+                if let category = channel.categoryID {
+                    grouped[category, default: []].append(channel)
+                }
+            }
+            categories = groups
+            byGroup = grouped
+            if currentGroup == nil { currentGroup = shownGroups.first?.id }
+        } catch {
+            self.error = error.localizedDescription
+        }
+        loading = false
+    }
+}
+
+// MARK: - My folders
+
+struct FoldersSettingsView: View {
+    @EnvironmentObject var settings: AppSettings
+    @State private var naming = false
+
+    var body: some View {
+        SettingsPage("My folders") {
+            GlassPanel {
+                SettingsActionRow("New folder", icon: "plus") { naming = true }
+            }
+
+            if !settings.prefs.folders.isEmpty {
+                GlassPanel("Folders") {
+                    ForEach(settings.prefs.folders) { folder in
+                        SettingsLinkRow(folder.name, icon: "square.stack.3d.up",
+                                        value: "\(folder.channelIDs.count) channels") {
+                            FolderDetailView(folderID: folder.id)
+                        }
+                    }
+                }
+            }
+            SettingsNote("Folders are your own Live TV groups. A channel can be in several folders and stays in its original group too. You can also long-press any channel in Live TV to add it to a folder.")
+        }
+        .sheet(isPresented: $naming) {
+            NameSheet(title: "New folder") { name in
+                settings.prefs.folders.append(ChannelFolder(id: UUID().uuidString, name: name, channelIDs: []))
+            }
+        }
+    }
+}
+
+struct FolderDetailView: View {
+    let folderID: String
+    @EnvironmentObject var settings: AppSettings
+    @Environment(\.dismiss) private var dismiss
+    @State private var names: [Int: XtreamChannel] = [:]
+    @State private var renaming = false
+    @State private var confirmingDelete = false
+    @State private var selected: Int?
+
+    private var folder: ChannelFolder? {
+        settings.prefs.folders.first { $0.id == folderID }
+    }
+
+    var body: some View {
+        SettingsPage(folder?.name ?? "Folder") {
+            GlassPanel {
+                SettingsLinkRow("Add or remove channels", icon: "plus.circle") {
+                    ChannelBrowser(mode: .folder(folderID))
+                }
+                SettingsActionRow("Rename", icon: "pencil") { renaming = true }
+                SettingsActionRow("Delete folder", icon: "trash") { confirmingDelete = true }
+            }
+
+            if let folder, !folder.channelIDs.isEmpty {
+                GlassPanel("Channels, in order") {
+                    ForEach(folder.channelIDs, id: \.self) { channelID in
+                        Button {
+                            selected = channelID
+                        } label: {
+                            ListRowLabel(title: names[channelID]?.name ?? "Channel \(channelID)",
+                                         logoURL: names[channelID]?.icon.flatMap { URL(string: $0) },
+                                         showsLogo: true,
+                                         trailingIcon: "ellipsis")
+                        }
+                        .buttonStyle(PlainPressStyle())
+                    }
+                }
+                SettingsNote("Select a channel to move it up or down, or to take it out of the folder.")
+            } else {
+                SettingsNote("This folder is empty. Choose \"Add or remove channels\" to fill it.")
+            }
+        }
         .task {
-            guard settings.xtream.isConfigured else {
-                error = "Add your Xtream login in Accounts first."
-                return
+            guard settings.xtream.isConfigured else { return }
+            let all = (try? await XtreamCache.shared.liveStreams(settings.xtreamClient)) ?? []
+            names = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+        .sheet(isPresented: $renaming) {
+            NameSheet(title: "Rename folder", initial: folder?.name ?? "") { name in
+                update { folder in folder.name = name }
             }
-            do {
-                categories = try await settings.xtreamClient.liveCategories()
-            } catch {
-                self.error = error.localizedDescription
+        }
+        .confirmationDialog("Delete this folder?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete folder", role: .destructive) {
+                settings.prefs.folders.removeAll { $0.id == folderID }
+                dismiss()
             }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The channels stay in their original groups.")
+        }
+        .confirmationDialog(
+            selected.map { names[$0]?.name ?? "Channel \($0)" } ?? "",
+            isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } }),
+            titleVisibility: .visible,
+            presenting: selected
+        ) { channelID in
+            Button("Move up") { move(channelID, by: -1) }
+            Button("Move down") { move(channelID, by: 1) }
+            Button("Move to top") { move(channelID, by: -100_000) }
+            Button("Remove from folder", role: .destructive) {
+                update { folder in folder.channelIDs.removeAll { $0 == channelID } }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func update(_ change: (inout ChannelFolder) -> Void) {
+        guard let index = settings.prefs.folders.firstIndex(where: { $0.id == folderID }) else { return }
+        var folder = settings.prefs.folders[index]
+        change(&folder)
+        settings.prefs.folders[index] = folder
+    }
+
+    private func move(_ channelID: Int, by offset: Int) {
+        update { folder in
+            guard let from = folder.channelIDs.firstIndex(of: channelID) else { return }
+            let to = min(max(from + offset, 0), folder.channelIDs.count - 1)
+            guard to != from else { return }
+            folder.channelIDs.remove(at: from)
+            folder.channelIDs.insert(channelID, at: to)
+        }
+    }
+}
+
+// MARK: - Streams
+
+struct StreamSettingsView: View {
+    @EnvironmentObject var settings: AppSettings
+
+    var body: some View {
+        SettingsPage("Streams") {
+            GlassPanel {
+                SettingsOptionRow("Maximum resolution", icon: "4k.tv", selection: $settings.prefs.maxResolution,
+                                  options: MaxResolution.allCases.map { ($0, $0.label) })
+                SettingsOptionRow("Sort streams", icon: "arrow.up.arrow.down", selection: $settings.prefs.streamSort,
+                                  options: StreamSort.allCases.map { ($0, $0.label) })
+                SettingsToggleRow("Play the first stream automatically", icon: "play.circle",
+                                  isOn: $settings.prefs.autoPlayFirstStream)
+            }
+            SettingsNote("Resolution is read from the addon's stream labels; streams without one are always shown.")
         }
     }
 }
@@ -419,38 +825,32 @@ struct PlayerSettingsView: View {
     private static let seekOptions = [5, 10, 15, 30, 60, 120]
 
     var body: some View {
-        Form {
-            Section("Audio language") {
-                OptionPicker("Preferred audio", selection: $settings.prefs.audioLanguage,
-                             options: LanguageOptions.audio.map { ($0.code, $0.name) })
+        SettingsPage("Player") {
+            GlassPanel("Audio language") {
+                SettingsOptionRow("Preferred audio", icon: "speaker.wave.2", selection: $settings.prefs.audioLanguage,
+                                  options: LanguageOptions.audio.map { ($0.code, $0.name) })
             }
 
-            Section("Remote") {
-                OptionPicker("Skip back (◀)", selection: $settings.prefs.seekBackSeconds,
-                             options: Self.seekOptions.map { ($0, "\($0) seconds") })
-                OptionPicker("Skip forward (▶)", selection: $settings.prefs.seekForwardSeconds,
-                             options: Self.seekOptions.map { ($0, "\($0) seconds") })
+            GlassPanel("Remote") {
+                SettingsOptionRow("Skip back", icon: "gobackward", selection: $settings.prefs.seekBackSeconds,
+                                  options: Self.seekOptions.map { ($0, "\($0) seconds") })
+                SettingsOptionRow("Skip forward", icon: "goforward", selection: $settings.prefs.seekForwardSeconds,
+                                  options: Self.seekOptions.map { ($0, "\($0) seconds") })
             }
 
-            Section {
-                Toggle("Match content (frame rate & HDR)", isOn: $settings.prefs.matchContent)
-                Toggle("Upscale low-resolution video", isOn: $settings.prefs.upscaleLowResolution)
-            } header: {
-                Text("Video")
-            } footer: {
-                Text("Match content switches your TV to the video's frame rate and HDR mode, when Match Content is also on in the Apple TV's own settings.")
+            GlassPanel("Video") {
+                SettingsToggleRow("Match content (frame rate & HDR)", icon: "tv", isOn: $settings.prefs.matchContent)
+                SettingsToggleRow("Upscale low-resolution video", icon: "arrow.up.left.and.arrow.down.right",
+                                  isOn: $settings.prefs.upscaleLowResolution)
             }
+            SettingsNote("Match content switches your TV to the video's frame rate and HDR mode, when Match Content is also on in the Apple TV's own settings.")
 
-            Section {
-                Toggle("Dialogue boost", isOn: $settings.prefs.dialogueBoost)
-                Toggle("Night mode (quieter loud scenes)", isOn: $settings.prefs.nightMode)
-            } header: {
-                Text("Audio")
-            } footer: {
-                Text("Either option decodes the audio on the Apple TV, so Dolby Atmos passthrough is off while they're on.")
+            GlassPanel("Audio") {
+                SettingsToggleRow("Dialogue boost", icon: "person.wave.2", isOn: $settings.prefs.dialogueBoost)
+                SettingsToggleRow("Night mode (quieter loud scenes)", icon: "moon", isOn: $settings.prefs.nightMode)
             }
+            SettingsNote("Either option decodes the audio on the Apple TV, so Dolby Atmos passthrough is off while they're on.")
         }
-        .navigationTitle("Player")
     }
 }
 
@@ -460,69 +860,140 @@ struct SubtitleSettingsView: View {
     @EnvironmentObject var settings: AppSettings
 
     var body: some View {
-        Form {
-            Section {
-                Toggle("Turn subtitles on automatically", isOn: $settings.prefs.autoSubtitles)
-                OptionPicker("Subtitle language", selection: $settings.prefs.subtitleLanguage,
-                             options: LanguageOptions.audio.map { ($0.code, $0.name) })
-                .disabled(!settings.prefs.autoSubtitles)
-            } footer: {
-                Text("When on, subtitles in this language are picked automatically if the video has them.")
+        SettingsPage("Subtitles") {
+            GlassPanel {
+                SettingsToggleRow("Turn subtitles on automatically", icon: "captions.bubble",
+                                  isOn: $settings.prefs.autoSubtitles)
+                SettingsOptionRow("Subtitle language", icon: "globe", selection: $settings.prefs.subtitleLanguage,
+                                  options: LanguageOptions.audio.map { ($0.code, $0.name) })
             }
+            SettingsNote("When on, subtitles in this language are picked automatically if the video has them.")
 
-            Section("Appearance") {
-                OptionPicker("Size", selection: $settings.prefs.subtitleSize,
-                             options: SubtitleSize.allCases.map { ($0, $0.label) })
+            GlassPanel("Appearance") {
+                SettingsOptionRow("Size", icon: "textformat.size", selection: $settings.prefs.subtitleSize,
+                                  options: SubtitleSize.allCases.map { ($0, $0.label) })
                 Text("The quick brown fox jumps over the lazy dog")
                     .font(.system(size: settings.prefs.subtitleSize.points, weight: .semibold))
                     .shadow(color: .black, radius: 3)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
             }
         }
-        .navigationTitle("Subtitles")
     }
 }
 
-// MARK: - Streams
+// MARK: - Home screen
 
-struct StreamSettingsView: View {
+struct HomeScreenSettingsView: View {
     @EnvironmentObject var settings: AppSettings
+    @State private var selected: HomeRow?
 
     var body: some View {
-        Form {
-            Section {
-                OptionPicker("Maximum resolution", selection: $settings.prefs.maxResolution,
-                             options: MaxResolution.allCases.map { ($0, $0.label) })
-                OptionPicker("Sort streams", selection: $settings.prefs.streamSort,
-                             options: StreamSort.allCases.map { ($0, $0.label) })
-                Toggle("Play the first stream automatically", isOn: $settings.prefs.autoPlayFirstStream)
-            } footer: {
-                Text("Resolution is read from the addon's stream labels; streams without one are always shown.")
+        let rows = settings.homeRowOrder
+        SettingsPage("Home screen") {
+            GlassPanel("Rows, top to bottom") {
+                ForEach(rows) { row in
+                    let hidden = settings.prefs.hiddenHomeRows.contains(row.rawValue)
+                    Button {
+                        selected = row
+                    } label: {
+                        ListRowLabel(title: row.title, icon: "line.3.horizontal",
+                                     trailing: hidden ? "Hidden" : "Shown",
+                                     trailingIcon: hidden ? "eye.slash" : "eye",
+                                     dimmed: hidden)
+                    }
+                    .buttonStyle(PlainPressStyle())
+                }
+            }
+            SettingsNote("Select a row to show or hide it, or to move it up or down. My List, Favourite Channels and My Teams only appear once they have something in them.")
+
+            GlassPanel {
+                SettingsActionRow("Reset to default", icon: "arrow.counterclockwise") {
+                    settings.prefs.homeRows = HomeRow.allCases.map(\.rawValue)
+                    settings.prefs.hiddenHomeRows = []
+                }
             }
         }
-        .navigationTitle("Streams")
+        .confirmationDialog(
+            selected?.title ?? "",
+            isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } }),
+            titleVisibility: .visible,
+            presenting: selected
+        ) { row in
+            if settings.prefs.hiddenHomeRows.contains(row.rawValue) {
+                Button("Show on Home") { settings.prefs.hiddenHomeRows.remove(row.rawValue) }
+            } else {
+                Button("Hide from Home") { settings.prefs.hiddenHomeRows.insert(row.rawValue) }
+            }
+            Button("Move up") { move(row, by: -1) }
+            Button("Move down") { move(row, by: 1) }
+            Button("Move to top") { move(row, by: -100) }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func move(_ row: HomeRow, by offset: Int) {
+        var order = settings.homeRowOrder
+        guard let from = order.firstIndex(of: row) else { return }
+        let to = min(max(from + offset, 0), order.count - 1)
+        guard to != from else { return }
+        order.remove(at: from)
+        order.insert(row, at: to)
+        settings.prefs.homeRows = order.map(\.rawValue)
     }
 }
 
-// MARK: - Content
+// MARK: - Appearance
 
-struct ContentSettingsView: View {
+struct AppearanceSettingsView: View {
     @EnvironmentObject var settings: AppSettings
 
     var body: some View {
-        Form {
-            Section {
-                OptionPicker("Language", selection: $settings.prefs.tmdbLanguage,
-                             options: LanguageOptions.tmdb.map { ($0.code, $0.name) })
-                OptionPicker("Region", selection: $settings.prefs.tmdbRegion,
-                             options: LanguageOptions.regions.map { ($0.code, $0.name) })
-            } header: {
-                Text("Catalogue")
-            } footer: {
-                Text("Language of titles and descriptions, and the region used for \"Now Playing\" and \"Upcoming\".")
+        SettingsPage("Appearance") {
+            GlassPanel {
+                SettingsOptionRow("Background", icon: "paintbrush", selection: $settings.prefs.backgroundStyle,
+                                  options: BackgroundStyle.allCases.map { ($0, $0.label) })
             }
+            SettingsNote("Frosted is the soft coloured backdrop behind Live TV, Sports, Calendar, Search and Settings. Dark is plain and easier on the eyes at night.")
         }
-        .navigationTitle("Content")
+    }
+}
+
+// MARK: - Sports
+
+struct SportsSettingsView: View {
+    @EnvironmentObject var settings: AppSettings
+
+    var body: some View {
+        SettingsPage("Sports") {
+            GlassPanel {
+                SettingsOptionRow("Show fixtures for the next", icon: "calendar", selection: $settings.prefs.sportsDaysAhead,
+                                  options: [(7, "7 days"), (14, "14 days"), (30, "30 days")])
+                SettingsLinkRow("My teams", icon: "star", value: "\(settings.prefs.favouriteTeams.count)") {
+                    TeamsManagerView()
+                }
+            }
+            SettingsNote("Fixtures cover every competition a team plays in, not just the league you picked it from.")
+        }
+    }
+}
+
+// MARK: - Calendar
+
+struct CalendarSettingsView: View {
+    @EnvironmentObject var settings: AppSettings
+
+    var body: some View {
+        SettingsPage("Calendar") {
+            GlassPanel {
+                SettingsOptionRow("Episodes per series", icon: "list.number", selection: $settings.prefs.calendarEpisodesPerSeries,
+                                  options: [(1, "Next episode only"), (2, "Next 2 episodes"), (3, "Next 3 episodes"), (5, "Next 5 episodes")])
+                SettingsOptionRow("Look ahead", icon: "calendar", selection: $settings.prefs.calendarDaysAhead,
+                                  options: [(30, "30 days"), (60, "60 days"), (90, "90 days"), (180, "6 months")])
+            }
+            SettingsNote("The calendar lists upcoming episodes of the series in My List. Episodes that have already aired are never shown.")
+        }
     }
 }

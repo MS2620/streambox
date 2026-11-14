@@ -29,7 +29,15 @@ final class AppSettings: ObservableObject {
     @Published var realDebridKey: String { didSet { Keychain.set(realDebridKey, for: "realDebridKey") } }
     @Published var xtream: XtreamAccount { didSet { Keychain.setCodable(xtream, for: "xtream") } }
     @Published var addons: [AddonEntry] { didSet { Keychain.setCodable(addons, for: "addons") } }
-    @Published var prefs: Preferences { didSet { prefs.save() } }
+    @Published var prefs: Preferences {
+        didSet {
+            prefs.save()
+            if prefs.epgRefreshHours != oldValue.epgRefreshHours {
+                let hours = prefs.epgRefreshHours
+                Task { await XtreamCache.shared.configure(refreshHours: hours) }
+            }
+        }
+    }
 
     var tmdb: TMDBClient {
         TMDBClient(token: tmdbToken, language: prefs.tmdbLanguage, region: prefs.tmdbRegion)
@@ -45,5 +53,25 @@ final class AppSettings: ObservableObject {
         xtream = Keychain.codable(XtreamAccount.self, for: "xtream") ?? XtreamAccount()
         addons = Keychain.codable([AddonEntry].self, for: "addons") ?? []
         prefs = Preferences.load()
+        let hours = prefs.epgRefreshHours
+        Task { await XtreamCache.shared.configure(refreshHours: hours) }
+    }
+
+    /// False for channels the user hid, or whose whole group is hidden.
+    func isVisible(_ channel: XtreamChannel) -> Bool {
+        if prefs.hiddenChannelIDs.contains(channel.id) { return false }
+        if let category = channel.categoryID, prefs.hiddenCategoryIDs.contains(category) { return false }
+        return true
+    }
+
+    /// Home rows in the user's order (rows added in newer versions go last).
+    var homeRowOrder: [HomeRow] {
+        var rows = prefs.homeRows.compactMap { HomeRow(rawValue: $0) }
+        for row in HomeRow.allCases where !rows.contains(row) { rows.append(row) }
+        return rows
+    }
+
+    var visibleHomeRows: [HomeRow] {
+        homeRowOrder.filter { !prefs.hiddenHomeRows.contains($0.rawValue) }
     }
 }

@@ -69,6 +69,69 @@ struct XtreamEPGEntry: Decodable, Hashable {
     }
 }
 
+/// A film in the provider's own library (VOD).
+struct XtreamVOD: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let icon: String?
+    let fileExtension: String
+    let added: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case streamID = "stream_id"
+        case name
+        case streamIcon = "stream_icon"
+        case containerExtension = "container_extension"
+        case added
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.flexInt(.streamID) ?? -1
+        name = (try? c.decode(String.self, forKey: .name)) ?? "Movie"
+        let rawIcon = try? c.decode(String.self, forKey: .streamIcon)
+        icon = (rawIcon?.isEmpty ?? true) ? nil : rawIcon
+        let ext = try? c.decode(String.self, forKey: .containerExtension)
+        fileExtension = (ext?.isEmpty ?? true) ? "mp4" : (ext ?? "mp4")
+        added = c.flexInt(.added) ?? 0
+    }
+}
+
+/// A series in the provider's own library.
+struct XtreamSeries: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let cover: String?
+    let plot: String?
+    let lastModified: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case seriesID = "series_id"
+        case name, cover, plot
+        case lastModified = "last_modified"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.flexInt(.seriesID) ?? -1
+        name = (try? c.decode(String.self, forKey: .name)) ?? "Series"
+        let rawCover = try? c.decode(String.self, forKey: .cover)
+        cover = (rawCover?.isEmpty ?? true) ? nil : rawCover
+        plot = try? c.decode(String.self, forKey: .plot)
+        lastModified = c.flexInt(.lastModified) ?? 0
+    }
+}
+
+struct XtreamEpisode: Identifiable, Hashable {
+    let id: String
+    let season: Int
+    let number: Int
+    let title: String
+    let fileExtension: String
+    let plot: String?
+    let image: String?
+}
+
 private struct ShortEPGResponse: Decodable {
     let epgListings: [XtreamEPGEntry]
     private enum CodingKeys: String, CodingKey { case epgListings = "epg_listings" }
@@ -130,8 +193,83 @@ struct XtreamClient {
 
     /// The provider's whole guide for one channel (usually several days).
     func fullEPG(streamID: Int) async throws -> [XtreamEPGEntry] {
-        let data = try await api("get_simple_data_table", ["stream_id": String(streamID)])
-        return try JSONDecoder().decode(ShortEPGResponse.self, from: data).epgListings
+        try Self.decodeEPG(try await fullEPGData(streamID: streamID))
+    }
+
+    /// The raw guide response, so it can be saved and decoded again later.
+    func fullEPGData(streamID: Int) async throws -> Data {
+        try await api("get_simple_data_table", ["stream_id": String(streamID)])
+    }
+
+    static func decodeEPG(_ data: Data) throws -> [XtreamEPGEntry] {
+        try JSONDecoder().decode(ShortEPGResponse.self, from: data).epgListings
+    }
+
+    // MARK: Provider library (VOD)
+
+    func vodStreams() async throws -> [XtreamVOD] {
+        try JSONDecoder().decode([XtreamVOD].self, from: try await api("get_vod_streams"))
+    }
+
+    func seriesList() async throws -> [XtreamSeries] {
+        try JSONDecoder().decode([XtreamSeries].self, from: try await api("get_series"))
+    }
+
+    /// Episodes of a provider series, sorted by season then episode.
+    /// Panels return `episodes` keyed by season, or as a list of lists.
+    func seriesEpisodes(seriesID: Int) async throws -> [XtreamEpisode] {
+        let data = try await api("get_series_info", ["series_id": String(seriesID)])
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        var groups: [[Any]] = []
+        if let bySeason = json["episodes"] as? [String: Any] {
+            groups = bySeason.values.compactMap { $0 as? [Any] }
+        } else if let list = json["episodes"] as? [Any] {
+            groups = list.compactMap { $0 as? [Any] }
+        }
+        var result: [XtreamEpisode] = []
+        for group in groups {
+            for item in group {
+                guard let raw = item as? [String: Any], let id = Self.text(raw["id"]) else { continue }
+                let info = raw["info"] as? [String: Any]
+                let ext = Self.text(raw["container_extension"]) ?? ""
+                result.append(XtreamEpisode(
+                    id: id,
+                    season: Self.number(raw["season"]) ?? 0,
+                    number: Self.number(raw["episode_num"]) ?? 0,
+                    title: Self.text(raw["title"]) ?? "Episode",
+                    fileExtension: ext.isEmpty ? "mp4" : ext,
+                    plot: info?["plot"] as? String,
+                    image: info?["movie_image"] as? String
+                ))
+            }
+        }
+        return result.sorted { a, b in
+            a.season != b.season ? a.season < b.season : a.number < b.number
+        }
+    }
+
+    private static func text(_ value: Any?) -> String? {
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private static func number(_ value: Any?) -> Int? {
+        if let string = value as? String { return Int(string) }
+        if let number = value as? NSNumber { return number.intValue }
+        return nil
+    }
+
+    func movieURL(for movie: XtreamVOD) -> URL? {
+        let user = account.username.formEncoded
+        let pass = account.password.formEncoded
+        return URL(string: "\(account.normalizedServer)/movie/\(user)/\(pass)/\(movie.id).\(movie.fileExtension)")
+    }
+
+    func episodeURL(for episode: XtreamEpisode) -> URL? {
+        let user = account.username.formEncoded
+        let pass = account.password.formEncoded
+        return URL(string: "\(account.normalizedServer)/series/\(user)/\(pass)/\(episode.id).\(episode.fileExtension)")
     }
 
     func liveURL(for channel: XtreamChannel, format: LiveStreamFormat = .hls) -> URL? {
@@ -141,17 +279,29 @@ struct XtreamClient {
     }
 }
 
-/// Caches the channel list and guide data so Search, Home and Sports don't
-/// re-download them every time.
+/// Caches the channel list and guide data so Search, Home, Live TV and Sports
+/// don't re-download them every time. Guide data is also saved on the Apple TV
+/// and re-downloaded as often as Settings → Content says.
 actor XtreamCache {
     static let shared = XtreamCache()
 
     private var streams: (key: String, date: Date, value: [XtreamChannel])?
     private var categories: (key: String, date: Date, value: [XtreamCategory])?
     private var guides: [String: (date: Date, value: [XtreamEPGEntry])] = [:]
+    private var failures: [String: Date] = [:]
+    private var movieCache: (key: String, value: [XtreamVOD])?
+    private var seriesCache: (key: String, value: [XtreamSeries])?
+
+    /// Hours between guide downloads; 0 = once per launch, below 0 = only manually.
+    private var refreshHours = 6
+    private let launch = Date()
 
     private static let listLifetime: TimeInterval = 10 * 60
-    private static let guideLifetime: TimeInterval = 20 * 60
+    private static let failureLifetime: TimeInterval = 5 * 60
+
+    func configure(refreshHours: Int) {
+        self.refreshHours = refreshHours
+    }
 
     private func accountKey(_ client: XtreamClient) -> String {
         client.account.normalizedServer + "|" + client.account.username
@@ -177,14 +327,95 @@ actor XtreamCache {
         return value
     }
 
+    // MARK: Guide
+
+    private func isFresh(_ date: Date) -> Bool {
+        if refreshHours < 0 { return true }
+        if refreshHours == 0 { return date >= launch }
+        return Date().timeIntervalSince(date) < TimeInterval(refreshHours) * 3600
+    }
+
+    private static var guideFolder: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("guide", isDirectory: true)
+    }
+
+    /// A stable file name (Swift's own hashes change every launch).
+    private func guideFile(_ cacheKey: String) -> URL? {
+        var hash: UInt64 = 5381
+        for byte in cacheKey.utf8 { hash = (hash &* 33) &+ UInt64(byte) }
+        return Self.guideFolder?.appendingPathComponent("\(hash).json")
+    }
+
     /// Never throws: a channel whose guide can't be read just has no listings.
     func fullEPG(_ client: XtreamClient, streamID: Int) async -> [XtreamEPGEntry] {
         let cacheKey = accountKey(client) + "|\(streamID)"
-        if let cached = guides[cacheKey], Date().timeIntervalSince(cached.date) < Self.guideLifetime {
+        if let cached = guides[cacheKey], isFresh(cached.date) {
             return cached.value
         }
-        let value = (try? await client.fullEPG(streamID: streamID)) ?? []
-        guides[cacheKey] = (Date(), value)
+
+        let file = guideFile(cacheKey)
+        var saved: [XtreamEPGEntry]?
+        if let file,
+           let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+           let modified = attributes[.modificationDate] as? Date,
+           let data = try? Data(contentsOf: file),
+           let entries = try? XtreamClient.decodeEPG(data) {
+            if isFresh(modified) {
+                guides[cacheKey] = (modified, entries)
+                return entries
+            }
+            saved = entries
+        }
+
+        // Don't retry a channel that just failed on every scroll.
+        if let failed = failures[cacheKey], Date().timeIntervalSince(failed) < Self.failureLifetime {
+            return guides[cacheKey]?.value ?? saved ?? []
+        }
+
+        guard let data = try? await client.fullEPGData(streamID: streamID),
+              let entries = try? XtreamClient.decodeEPG(data) else {
+            failures[cacheKey] = Date()
+            // Out-of-date listings are better than none.
+            return guides[cacheKey]?.value ?? saved ?? []
+        }
+        guides[cacheKey] = (Date(), entries)
+        failures[cacheKey] = nil
+        if let file, let folder = Self.guideFolder {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? data.write(to: file, options: .atomic)
+        }
+        return entries
+    }
+
+    /// Forgets all guide data so it is downloaded again.
+    func clearGuide() {
+        guides.removeAll()
+        failures.removeAll()
+        if let folder = Self.guideFolder {
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    // MARK: Provider library
+
+    /// The provider's most recently added films.
+    func recentMovies(_ client: XtreamClient, limit: Int = 40) async throws -> [XtreamVOD] {
+        let key = accountKey(client)
+        if let movieCache, movieCache.key == key { return movieCache.value }
+        let all = try await client.vodStreams()
+        let value = Array(all.sorted { $0.added > $1.added }.prefix(limit))
+        movieCache = (key, value)
+        return value
+    }
+
+    /// The provider's most recently updated series.
+    func recentSeries(_ client: XtreamClient, limit: Int = 40) async throws -> [XtreamSeries] {
+        let key = accountKey(client)
+        if let seriesCache, seriesCache.key == key { return seriesCache.value }
+        let all = try await client.seriesList()
+        let value = Array(all.sorted { $0.lastModified > $1.lastModified }.prefix(limit))
+        seriesCache = (key, value)
         return value
     }
 }

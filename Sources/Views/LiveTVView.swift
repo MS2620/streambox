@@ -1,37 +1,92 @@
 import SwiftUI
+import AetherEngine
 
-private struct CategoryEntry: Identifiable, Hashable {
+private struct GroupEntry: Identifiable, Hashable {
     let id: String
     let name: String
+    let icon: String
 }
 
+/// One block in a guide row: a programme, or an empty gap between listings.
+private struct GuideSegment: Identifiable {
+    let id: String
+    let title: String
+    let time: String
+    let width: CGFloat
+    let isGap: Bool
+    let onNow: Bool
+}
+
+/// Live TV, as a TV guide (EPG grid) or a channel list. The layout is chosen
+/// with the Guide / List buttons here or in Settings → Live TV & Guide.
 struct LiveTVView: View {
     @EnvironmentObject var settings: AppSettings
 
     @State private var categories: [XtreamCategory] = []
     @State private var selectedID: String?
     @State private var channels: [XtreamChannel] = []
-    @State private var nowPlaying: [Int: String] = [:]
+    @State private var epg: [Int: [XtreamEPGEntry]] = [:]
     @State private var loadingChannels = false
     @State private var error: String?
     @State private var playback: PlaybackRequest?
+    @State private var infoChannel: XtreamChannel?
+    @State private var infoEntry: XtreamEPGEntry?
+    @State private var windowStart = LiveTVView.halfHourFloor(Date())
+    @State private var now = Date()
+    @FocusState private var focusedCell: String?
 
     private static let favouritesID = "__favourites"
+    private static let folderPrefix = "folder:"
+    /// The guide builds every row up front, so very large groups are capped.
+    private static let guideRowLimit = 200
+    /// Listings are downloaded for this many channels per group.
+    private static let guideLoadLimit = 300
+    private static let timelineHours = 6
+    private static let channelColumn: CGFloat = 290
+    private static let gridWidth: CGFloat = 1030
+    private static let rowHeight: CGFloat = 76
+    private static let headerHeight: CGFloat = 40
 
     private var client: XtreamClient { settings.xtreamClient }
     private var prefs: Preferences { settings.prefs }
 
-    /// Visible categories, with a Favourites entry when there are any.
-    private var visibleCategories: [CategoryEntry] {
-        let shown = categories
+    static func halfHourFloor(_ date: Date) -> Date {
+        let seconds = date.timeIntervalSince1970
+        return Date(timeIntervalSince1970: (seconds / 1800).rounded(.down) * 1800)
+    }
+
+    private var pixelsPerMinute: CGFloat {
+        Self.gridWidth / CGFloat(max(1, prefs.guideHours) * 60)
+    }
+
+    // MARK: - Groups and channels
+
+    /// Favourites, the user's own folders, then the provider's groups that aren't hidden.
+    private var groups: [GroupEntry] {
+        var list = prefs.folders.map {
+            GroupEntry(id: Self.folderPrefix + $0.id, name: $0.name, icon: "square.stack.3d.up")
+        }
+        list += categories
             .filter { !prefs.hiddenCategoryIDs.contains($0.id) }
-            .map { CategoryEntry(id: $0.id, name: $0.name) }
-        guard !prefs.favouriteChannelIDs.isEmpty else { return shown }
-        let favourites = CategoryEntry(id: Self.favouritesID, name: "★ Favourites")
-        return prefs.favouritesFirst ? [favourites] + shown : shown + [favourites]
+            .map { GroupEntry(id: $0.id, name: $0.name, icon: "folder") }
+        if !prefs.favouriteChannelIDs.isEmpty {
+            let favourites = GroupEntry(id: Self.favouritesID, name: "Favourites", icon: "star")
+            if prefs.favouritesFirst {
+                list.insert(favourites, at: 0)
+            } else {
+                list.append(favourites)
+            }
+        }
+        return list
+    }
+
+    private var isFolderSelected: Bool {
+        selectedID?.hasPrefix(Self.folderPrefix) ?? false
     }
 
     private var sortedChannels: [XtreamChannel] {
+        // Folders keep the order the user gave them.
+        if isFolderSelected { return channels }
         switch prefs.channelSort {
         case .server:
             return channels
@@ -42,132 +97,421 @@ struct LiveTVView: View {
         }
     }
 
+    private var guideChannels: [XtreamChannel] {
+        Array(sortedChannels.prefix(Self.guideRowLimit))
+    }
+
+    private var channelsKey: String {
+        "\(selectedID ?? "")|\(prefs.hiddenChannelIDs.count)|\(prefs.folders.hashValue)|\(prefs.favouriteChannelIDs.count)"
+    }
+
+    private var guideKey: String {
+        "\(selectedID ?? "")|\(channels.count)|\(channels.first?.id ?? 0)|\(prefs.showEPG)"
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        Group {
+        ZStack {
+            AppBackground()
+
             if !settings.xtream.isConfigured {
                 ContentUnavailableView("Add your IPTV login", systemImage: "tv",
-                                       description: Text("Open Settings → Accounts and enter your Xtream Codes server, username and password."))
+                                       description: Text("Open Settings → Connections and enter your Xtream Codes server, username and password."))
             } else if let error {
                 ContentUnavailableView("Couldn't load channels", systemImage: "exclamationmark.triangle",
                                        description: Text(error))
             } else {
-                HStack(alignment: .top, spacing: 40) {
-                    categoryList.frame(width: 520)
-                    channelList
+                HStack(alignment: .top, spacing: 30) {
+                    sidebar
+                        .frame(width: 400)
+                    Group {
+                        if prefs.liveLayout == .guide {
+                            guide
+                        } else {
+                            list
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
+                .padding(.top, 10)
             }
         }
         .task(id: settings.xtream) { await loadCategories() }
-        .task(id: selectedID) { await loadChannels() }
-        .onChange(of: prefs.favouriteChannelIDs) { _, _ in
-            if selectedID == Self.favouritesID { Task { await loadChannels() } }
+        .task(id: channelsKey) { await loadChannels() }
+        .task(id: guideKey) { await loadGuide() }
+        .task {
+            // Keeps "now" (progress bars, the red line) and the guide's start time moving.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                now = Date()
+                let floor = Self.halfHourFloor(now)
+                if floor > windowStart { windowStart = floor }
+            }
+        }
+        .onChange(of: focusedCell) { _, id in
+            focusChanged(id)
         }
         .fullScreenCover(item: $playback) { request in
             PlayerView(request: request).ignoresSafeArea()
         }
     }
 
-    private var categoryList: some View {
-        List(visibleCategories) { category in
-            Button {
-                selectedID = category.id
-                if prefs.rememberLastCategory { settings.prefs.lastCategoryID = category.id }
-            } label: {
-                HStack {
-                    Text(category.name).lineLimit(1)
-                    Spacer()
-                    if category.id == selectedID { Image(systemName: "checkmark") }
+    // MARK: - Sidebar
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                ForEach(LiveLayout.allCases) { layout in
+                    Button {
+                        settings.prefs.liveLayout = layout
+                    } label: {
+                        PillLabel(title: layout.label,
+                                  icon: layout == .guide ? "square.grid.2x2" : "list.bullet",
+                                  selected: prefs.liveLayout == layout)
+                    }
+                    .buttonStyle(PlainPressStyle())
                 }
+            }
+
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(groups) { group in
+                        Button {
+                            select(group)
+                        } label: {
+                            ListRowLabel(title: group.name, icon: group.icon, selected: group.id == selectedID)
+                        }
+                        .buttonStyle(PlainPressStyle())
+                    }
+                }
+                .padding(.vertical, 10)
             }
         }
     }
 
-    private var channelList: some View {
-        List {
+    // MARK: - Guide (EPG grid)
+
+    private var guide: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            infoPanel
+
             if loadingChannels && channels.isEmpty {
-                ProgressView()
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
             } else if channels.isEmpty {
-                Text(selectedID == Self.favouritesID
-                     ? "No favourites yet. Long-press a channel to add it."
-                     : "No channels in this category.")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(sortedChannels) { channel in
-                Button {
-                    play(channel)
-                } label: {
-                    channelRow(channel)
-                }
-                .contextMenu {
-                    if prefs.favouriteChannelIDs.contains(channel.id) {
-                        Button("Remove from Favourites", systemImage: "star.slash") {
-                            settings.prefs.favouriteChannelIDs.remove(channel.id)
+                emptyNote
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(spacing: 8) {
+                                Text(now.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + "  " + DayFormat.time(now))
+                                    .font(.system(size: 22, weight: .bold))
+                                    .frame(width: Self.channelColumn, height: Self.headerHeight, alignment: .leading)
+                                ForEach(guideChannels) { channel in
+                                    GuideChannelCell(channel: channel,
+                                                     number: prefs.showChannelNumbers ? channel.number : nil,
+                                                     highlighted: infoChannel?.id == channel.id,
+                                                     favourite: prefs.favouriteChannelIDs.contains(channel.id))
+                                        .frame(width: Self.channelColumn, height: Self.rowHeight)
+                                }
+                            }
+
+                            ScrollView(.horizontal) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    timeHeader
+                                    ForEach(guideChannels) { channel in
+                                        programmeRow(channel)
+                                    }
+                                }
+                                .overlay(alignment: .topLeading) {
+                                    Rectangle()
+                                        .fill(Theme.live)
+                                        .frame(width: 3)
+                                        .padding(.top, Self.headerHeight + 4)
+                                        .offset(x: CGFloat(now.timeIntervalSince(windowStart) / 60) * pixelsPerMinute)
+                                        .allowsHitTesting(false)
+                                }
+                            }
                         }
-                    } else {
-                        Button("Add to Favourites", systemImage: "star") {
-                            settings.prefs.favouriteChannelIDs.insert(channel.id)
+
+                        if channels.count > Self.guideRowLimit {
+                            Text("Showing the first \(Self.guideRowLimit) channels of \(channels.count). Switch to List to see them all.")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.7))
                         }
                     }
-                }
-                .task {
-                    if prefs.showEPG { await loadEPG(for: channel) }
+                    .padding(.bottom, 60)
                 }
             }
         }
     }
 
-    private func channelRow(_ channel: XtreamChannel) -> some View {
-        HStack(spacing: 24) {
-            if prefs.channelSort == .number, let number = channel.number {
-                Text("\(number)")
-                    .font(.caption).monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 70, alignment: .trailing)
+    private var timeHeader: some View {
+        HStack(spacing: 0) {
+            ForEach(0..<(Self.timelineHours * 2), id: \.self) { slot in
+                Text(DayFormat.time(windowStart.addingTimeInterval(TimeInterval(slot) * 1800)))
+                    .font(.system(size: 22, weight: .bold))
+                    .frame(width: pixelsPerMinute * 30, height: Self.headerHeight, alignment: .leading)
             }
-            AsyncImage(url: channel.icon.flatMap { URL(string: $0) }) { image in
-                image.resizable().aspectRatio(contentMode: .fit)
-            } placeholder: {
-                Image(systemName: "tv").font(.title2)
-            }
-            .frame(width: 90, height: 56)
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(channel.name).lineLimit(1)
-                    if prefs.favouriteChannelIDs.contains(channel.id) {
-                        Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow)
+    private func programmeRow(_ channel: XtreamChannel) -> some View {
+        let segments = segments(for: channel)
+        return HStack(spacing: 0) {
+            ForEach(segments) { segment in
+                if segment.isGap {
+                    Color.clear.frame(width: segment.width, height: Self.rowHeight)
+                } else {
+                    Button {
+                        play(channel)
+                    } label: {
+                        ProgrammeCell(title: segment.title, time: segment.time, onNow: segment.onNow,
+                                      width: max(segment.width - 6, 4), height: Self.rowHeight)
                     }
-                }
-                if prefs.showEPG, let now = nowPlaying[channel.id] {
-                    Text(now).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .buttonStyle(PlainPressStyle())
+                    .focused($focusedCell, equals: segment.id)
+                    .contextMenu { channelMenu(channel) }
+                    .frame(width: segment.width, alignment: .leading)
                 }
             }
         }
+        .frame(height: Self.rowHeight)
+    }
+
+    /// Lays a channel's listings along the timeline, filling holes with gaps.
+    private func segments(for channel: XtreamChannel) -> [GuideSegment] {
+        let start = windowStart
+        let end = start.addingTimeInterval(TimeInterval(Self.timelineHours) * 3600)
+        let scale = pixelsPerMinute
+
+        let listings = (epg[channel.id] ?? [])
+            .filter { entry in
+                guard let begins = entry.start, let ends = entry.end else { return false }
+                return ends > start && begins < end
+            }
+            .sorted { ($0.start ?? .distantPast) < ($1.start ?? .distantPast) }
+
+        var result: [GuideSegment] = []
+        var cursor = start
+        for entry in listings {
+            guard let begins = entry.start, let ends = entry.end else { continue }
+            let from = max(begins, cursor)
+            let to = min(ends, end)
+            // Skips listings that overlap one already placed.
+            guard to > from else { continue }
+            if from > cursor {
+                result.append(GuideSegment(id: "\(channel.id)|gap|\(result.count)", title: "", time: "",
+                                           width: CGFloat(from.timeIntervalSince(cursor) / 60) * scale,
+                                           isGap: true, onNow: false))
+            }
+            result.append(GuideSegment(
+                id: "\(channel.id)|\(Int(begins.timeIntervalSince1970))|\(result.count)",
+                title: entry.title.isEmpty ? "No information" : entry.title,
+                time: "\(DayFormat.time(begins)) – \(DayFormat.time(ends))",
+                width: CGFloat(to.timeIntervalSince(from) / 60) * scale,
+                isGap: false,
+                onNow: begins <= now && now < ends
+            ))
+            cursor = to
+        }
+
+        if !result.contains(where: { !$0.isGap }) {
+            // No listings: one block across the visible window, still selectable to watch.
+            let waiting = epg[channel.id] == nil && prefs.showEPG
+            return [GuideSegment(id: "\(channel.id)|0|0", title: waiting ? "Loading guide…" : "No information",
+                                 time: "", width: Self.gridWidth, isGap: false, onNow: false)]
+        }
+        return result
+    }
+
+    private var infoPanel: some View {
+        let entry = infoEntry ?? infoChannel.flatMap { current($0.id) }
+        return HStack(alignment: .top, spacing: 30) {
+            if prefs.guidePreview {
+                LivePreview(channel: infoChannel, active: playback == nil)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Text(infoChannel?.name ?? (groups.first { $0.id == selectedID }?.name ?? "Live TV"))
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(1)
+                Text(entry?.title ?? (infoChannel == nil ? "Choose a programme" : "No information"))
+                    .font(.system(size: 44, weight: .heavy))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if let entry, let begins = entry.start, let ends = entry.end, ends > begins {
+                    HStack(spacing: 16) {
+                        Text("\(DayFormat.time(begins)) – \(DayFormat.time(ends))")
+                            .font(.system(size: 22, weight: .semibold))
+                        if begins <= now && now < ends {
+                            ThinProgress(fraction: now.timeIntervalSince(begins) / ends.timeIntervalSince(begins))
+                                .frame(width: 260)
+                            Text("\(max(1, Int(ends.timeIntervalSince(now) / 60))) min left")
+                                .font(.system(size: 22, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.7))
+                        } else {
+                            Text("\(Int(ends.timeIntervalSince(begins) / 60)) min")
+                                .font(.system(size: 22, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
+                }
+                if let description = entry?.description, !description.isEmpty {
+                    Text(description)
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(3)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 225, alignment: .top)
+    }
+
+    // MARK: - List
+
+    private var list: some View {
+        Group {
+            if loadingChannels && channels.isEmpty {
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 60)
+            } else if channels.isEmpty {
+                emptyNote
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(sortedChannels) { channel in
+                            Button {
+                                play(channel)
+                            } label: {
+                                ChannelListRow(channel: channel,
+                                               number: prefs.showChannelNumbers ? channel.number : nil,
+                                               current: prefs.showEPG ? current(channel.id) : nil,
+                                               next: prefs.showEPG ? next(channel.id) : nil,
+                                               now: now,
+                                               favourite: prefs.favouriteChannelIDs.contains(channel.id))
+                            }
+                            .buttonStyle(PlainPressStyle())
+                            .focused($focusedCell, equals: "\(channel.id)")
+                            .contextMenu { channelMenu(channel) }
+                        }
+                    }
+                    .padding(.vertical, 10)
+                    .padding(.trailing, 10)
+                }
+            }
+        }
+    }
+
+    private var emptyNote: some View {
+        Text(selectedID == Self.favouritesID
+             ? "No favourites yet. Long-press a channel to add it."
+             : (isFolderSelected ? "This folder is empty. Add channels in Settings → Content → My folders, or long-press a channel."
+                                 : "No channels in this group."))
+            .foregroundStyle(.white.opacity(0.7))
+            .padding(.top, 40)
+    }
+
+    @ViewBuilder
+    private func channelMenu(_ channel: XtreamChannel) -> some View {
+        if prefs.favouriteChannelIDs.contains(channel.id) {
+            Button("Remove from Favourites", systemImage: "star.slash") {
+                settings.prefs.favouriteChannelIDs.remove(channel.id)
+            }
+        } else {
+            Button("Add to Favourites", systemImage: "star") {
+                settings.prefs.favouriteChannelIDs.insert(channel.id)
+            }
+        }
+        ForEach(prefs.folders) { folder in
+            if folder.channelIDs.contains(channel.id) {
+                Button("Remove from \(folder.name)", systemImage: "minus.circle") {
+                    toggle(channel.id, inFolder: folder.id)
+                }
+            } else {
+                Button("Add to \(folder.name)", systemImage: "plus.circle") {
+                    toggle(channel.id, inFolder: folder.id)
+                }
+            }
+        }
+        Button("Hide channel", systemImage: "eye.slash", role: .destructive) {
+            settings.prefs.hiddenChannelIDs.insert(channel.id)
+        }
+    }
+
+    // MARK: - Guide data helpers
+
+    private func current(_ channelID: Int) -> XtreamEPGEntry? {
+        epg[channelID]?.first { ($0.start ?? .distantFuture) <= now && now < ($0.end ?? .distantPast) }
+    }
+
+    private func next(_ channelID: Int) -> XtreamEPGEntry? {
+        guard let ends = current(channelID)?.end else { return nil }
+        return epg[channelID]?
+            .filter { ($0.start ?? .distantPast) >= ends }
+            .min { ($0.start ?? .distantPast) < ($1.start ?? .distantPast) }
     }
 
     // MARK: - Actions
 
+    private func select(_ group: GroupEntry) {
+        guard group.id != selectedID else { return }
+        infoChannel = nil
+        infoEntry = nil
+        selectedID = group.id
+        if prefs.rememberLastCategory { settings.prefs.lastCategoryID = group.id }
+    }
+
+    /// Cell ids are "channel|start|n" in the guide and "channel" in the list.
+    private func focusChanged(_ id: String?) {
+        guard let id else { return }
+        let parts = id.split(separator: "|")
+        guard let first = parts.first, let channelID = Int(first),
+              let channel = channels.first(where: { $0.id == channelID }) else { return }
+        infoChannel = channel
+        let stamp = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+        if stamp == 0 {
+            infoEntry = nil
+        } else {
+            infoEntry = epg[channelID]?.first { Int($0.start?.timeIntervalSince1970 ?? 0) == stamp }
+        }
+    }
+
+    private func toggle(_ channelID: Int, inFolder folderID: String) {
+        guard let index = settings.prefs.folders.firstIndex(where: { $0.id == folderID }) else { return }
+        var folder = settings.prefs.folders[index]
+        if let position = folder.channelIDs.firstIndex(of: channelID) {
+            folder.channelIDs.remove(at: position)
+        } else {
+            folder.channelIDs.append(channelID)
+        }
+        settings.prefs.folders[index] = folder
+    }
+
     private func play(_ channel: XtreamChannel) {
         guard let url = client.liveURL(for: channel, format: prefs.liveFormat) else { return }
-        let list = sortedChannels
-        let index = list.firstIndex(of: channel) ?? 0
+        let all = sortedChannels
+        let index = all.firstIndex(of: channel) ?? 0
         playback = PlaybackRequest(
             url: url,
             title: channel.name,
             artworkURL: channel.icon.flatMap { URL(string: $0) },
-            sourceName: visibleCategories.first(where: { $0.id == selectedID })?.name,
+            sourceName: groups.first(where: { $0.id == selectedID })?.name,
             isLive: true,
             httpHeaders: client.requestHeaders,
-            live: LiveContext(channels: list, index: index)
+            live: LiveContext(channels: all, index: index)
         )
     }
+
+    // MARK: - Loading
 
     private func loadCategories() async {
         guard settings.xtream.isConfigured else { return }
         do {
-            categories = try await client.liveCategories()
+            categories = try await XtreamCache.shared.liveCategories(client)
             error = nil
-            let ids = visibleCategories.map(\.id)
+            let ids = groups.map(\.id)
             if let selectedID, ids.contains(selectedID) { return }
             if prefs.rememberLastCategory, let last = prefs.lastCategoryID, ids.contains(last) {
                 selectedID = last
@@ -180,23 +524,275 @@ struct LiveTVView: View {
     }
 
     private func loadChannels() async {
-        guard let selectedID else { return }
+        guard let selectedID else {
+            channels = []
+            return
+        }
         loadingChannels = true
         defer { loadingChannels = false }
-        channels = []
+
+        let client = self.client
+        var loaded: [XtreamChannel] = []
         if selectedID == Self.favouritesID {
-            let all = (try? await client.liveStreams(categoryID: nil)) ?? []
-            channels = all.filter { prefs.favouriteChannelIDs.contains($0.id) }
+            let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
+            loaded = all.filter { prefs.favouriteChannelIDs.contains($0.id) && settings.isVisible($0) }
+        } else if selectedID.hasPrefix(Self.folderPrefix) {
+            let folderID = String(selectedID.dropFirst(Self.folderPrefix.count))
+            let ids = prefs.folders.first(where: { $0.id == folderID })?.channelIDs ?? []
+            let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
+            let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            loaded = ids.compactMap { byID[$0] }
         } else {
-            channels = (try? await client.liveStreams(categoryID: selectedID)) ?? []
+            let all = (try? await client.liveStreams(categoryID: selectedID)) ?? []
+            loaded = all.filter { !prefs.hiddenChannelIDs.contains($0.id) }
         }
+        guard !Task.isCancelled else { return }
+        channels = loaded
     }
 
-    private func loadEPG(for channel: XtreamChannel) async {
-        guard nowPlaying[channel.id] == nil else { return }
-        guard let entries = try? await client.shortEPG(streamID: channel.id, limit: 2) else { return }
-        let now = Date()
-        let current = entries.first { ($0.start ?? .distantPast) <= now && now < ($0.end ?? .distantFuture) } ?? entries.first
-        if let current { nowPlaying[channel.id] = "Now: \(current.title)" }
+    private nonisolated static func listings(_ client: XtreamClient, channelID: Int,
+                                             from: Date, until: Date) async -> (Int, [XtreamEPGEntry]) {
+        let all = await XtreamCache.shared.fullEPG(client, streamID: channelID)
+        let kept = all.filter { entry in
+            guard let begins = entry.start, let ends = entry.end else { return false }
+            return ends > from && begins < until
+        }
+        return (channelID, kept)
+    }
+
+    /// Downloads listings a few channels at a time, top of the list first.
+    private func loadGuide() async {
+        guard prefs.showEPG else { return }
+        let client = self.client
+        let pending = sortedChannels.prefix(Self.guideLoadLimit).filter { epg[$0.id] == nil }
+        guard !pending.isEmpty else { return }
+
+        // Only what the guide can show: from an hour ago to a day ahead.
+        let from = Date().addingTimeInterval(-3600)
+        let until = Date().addingTimeInterval(24 * 3600)
+        var buffer: [Int: [XtreamEPGEntry]] = [:]
+
+        var queue = pending.map(\.id).makeIterator()
+        await withTaskGroup(of: (Int, [XtreamEPGEntry]).self) { group in
+            for _ in 0..<6 {
+                guard let channelID = queue.next() else { break }
+                group.addTask { await Self.listings(client, channelID: channelID, from: from, until: until) }
+            }
+            while let (channelID, entries) = await group.next() {
+                if Task.isCancelled {
+                    group.cancelAll()
+                    break
+                }
+                buffer[channelID] = entries
+                if buffer.count >= 4 {
+                    epg.merge(buffer) { _, new in new }
+                    buffer.removeAll()
+                }
+                if let nextID = queue.next() {
+                    group.addTask { await Self.listings(client, channelID: nextID, from: from, until: until) }
+                }
+            }
+        }
+        if !buffer.isEmpty {
+            epg.merge(buffer) { _, new in new }
+        }
+    }
+}
+
+// MARK: - Cells
+
+private struct GuideChannelCell: View {
+    let channel: XtreamChannel
+    let number: Int?
+    let highlighted: Bool
+    let favourite: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let number {
+                Text("\(number)")
+                    .font(.system(size: 18, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            AsyncImage(url: channel.icon.flatMap { URL(string: $0) }) { image in
+                image.resizable().aspectRatio(contentMode: .fit)
+            } placeholder: {
+                Image(systemName: "tv").foregroundStyle(.white.opacity(0.5))
+            }
+            .frame(width: 64, height: 40)
+            Text(channel.name)
+                .font(.system(size: 20, weight: .bold))
+                .lineLimit(2)
+            Spacer(minLength: 0)
+            if favourite {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Color.yellow)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(highlighted ? Theme.glassStrong : Theme.glass)
+        )
+    }
+}
+
+private struct ProgrammeCell: View {
+    let title: String
+    let time: String
+    let onNow: Bool
+    let width: CGFloat
+    let height: CGFloat
+    @Environment(\.isFocused) private var isFocused
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 22, weight: .semibold))
+                .lineLimit(1)
+            if !time.isEmpty {
+                Text(time)
+                    .font(.system(size: 18))
+                    .opacity(0.7)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, width > 40 ? 14 : 2)
+        .frame(width: width, height: height, alignment: .leading)
+        .foregroundStyle(isFocused ? Theme.ink : Color.white)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isFocused ? Color.white : (onNow ? Theme.glassStrong : Theme.glass))
+        )
+        .clipped()
+        .animation(.easeOut(duration: 0.1), value: isFocused)
+    }
+}
+
+private struct ChannelListRow: View {
+    let channel: XtreamChannel
+    let number: Int?
+    let current: XtreamEPGEntry?
+    let next: XtreamEPGEntry?
+    let now: Date
+    let favourite: Bool
+    @Environment(\.isFocused) private var isFocused
+
+    private var progress: Double? {
+        guard let begins = current?.start, let ends = current?.end, ends > begins else { return nil }
+        return now.timeIntervalSince(begins) / ends.timeIntervalSince(begins)
+    }
+
+    var body: some View {
+        HStack(spacing: 22) {
+            if let number {
+                Text("\(number)")
+                    .font(.system(size: 20, weight: .bold))
+                    .monospacedDigit()
+                    .opacity(0.6)
+                    .frame(width: 60, alignment: .trailing)
+            }
+            AsyncImage(url: channel.icon.flatMap { URL(string: $0) }) { image in
+                image.resizable().aspectRatio(contentMode: .fit)
+            } placeholder: {
+                Image(systemName: "tv").font(.title2)
+            }
+            .frame(width: 96, height: 56)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(channel.name)
+                        .font(.system(size: 20, weight: .bold))
+                        .opacity(0.7)
+                        .lineLimit(1)
+                    if favourite {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(isFocused ? Theme.ink : Color.yellow)
+                    }
+                }
+                Text(current?.title ?? channel.name)
+                    .font(.system(size: 28, weight: .bold))
+                    .lineLimit(1)
+                if let next, let begins = next.start {
+                    Text("Next \(DayFormat.time(begins)) · \(next.title)")
+                        .font(.system(size: 20, weight: .medium))
+                        .opacity(0.7)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            if let begins = current?.start, let ends = current?.end, let progress {
+                VStack(alignment: .trailing, spacing: 10) {
+                    Text("\(DayFormat.time(begins)) – \(DayFormat.time(ends))")
+                        .font(.system(size: 22, weight: .semibold))
+                        .opacity(0.7)
+                    ThinProgress(fraction: progress, tint: isFocused ? Theme.ink : Color.white)
+                        .frame(width: 240)
+                }
+            }
+        }
+        .foregroundStyle(isFocused ? Theme.ink : Color.white)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isFocused ? Color.white : Theme.glass)
+        )
+        .animation(.easeOut(duration: 0.12), value: isFocused)
+    }
+}
+
+// MARK: - Muted live preview
+
+/// Plays the focused channel, muted, in the guide's top-left box. It shares
+/// the app's one player engine, so it steps aside while the full-screen
+/// player is open and stops when Live TV is left.
+private struct LivePreview: View {
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var player: PlayerEngineHolder
+    let channel: XtreamChannel?
+    let active: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if active, channel != nil, let engine = player.engine {
+                AetherPlayerSurface(engine: engine)
+            } else {
+                Image(systemName: "play.tv")
+                    .font(.system(size: 44))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+        }
+        .frame(width: 400, height: 225)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .task(id: "\(active)|\(channel?.id ?? -1)") {
+            guard active, let channel, let engine = player.engine else { return }
+            // Wait until focus settles on a channel before tuning in.
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled else { return }
+            let client = settings.xtreamClient
+            guard let url = client.liveURL(for: channel, format: settings.prefs.liveFormat) else { return }
+            engine.volume = 0
+            let options = LoadOptions(
+                httpHeaders: client.requestHeaders,
+                matchContentEnabled: false,
+                isLive: true,
+                liveJoinProfile: .fastZap,
+                nativeRemoteHLS: url.pathExtension.lowercased() == "m3u8",
+                preferredAudioLanguages: [settings.prefs.audioLanguage]
+            )
+            _ = try? await engine.load(url: url, options: options)
+        }
+        .onDisappear {
+            if active { player.engine?.stop() }
+        }
     }
 }

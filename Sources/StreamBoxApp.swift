@@ -10,6 +10,7 @@ struct StreamBoxApp: App {
             RootView()
                 .environmentObject(settings)
                 .environmentObject(player)
+                .preferredColorScheme(.dark)
         }
     }
 }
@@ -18,13 +19,13 @@ struct RootView: View {
     var body: some View {
         TabView {
             Tab("Home", systemImage: "house") {
-                CatalogView(hero: Catalog.homeHero, sections: Catalog.home, showsFavouriteChannels: true)
+                CatalogView(mode: .home)
             }
             Tab("Movies", systemImage: "film") {
-                CatalogView(hero: Catalog.moviesHero, sections: Catalog.movies, myListKind: .movie)
+                CatalogView(mode: .movies)
             }
             Tab("Series", systemImage: "play.tv") {
-                CatalogView(hero: Catalog.seriesHero, sections: Catalog.series, myListKind: .tv)
+                CatalogView(mode: .series)
             }
             Tab("Live TV", systemImage: "antenna.radiowaves.left.and.right") {
                 LiveTVView()
@@ -35,8 +36,6 @@ struct RootView: View {
             Tab("Calendar", systemImage: "calendar") {
                 CalendarView()
             }
-            // The search role lets tvOS lay out the keyboard and results
-            // itself and keeps the tab bar reachable from search.
             Tab("Search", systemImage: "magnifyingglass", role: .search) {
                 SearchView()
             }

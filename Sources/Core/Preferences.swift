@@ -68,6 +68,46 @@ enum SubtitleSize: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum LiveLayout: String, Codable, CaseIterable, Identifiable {
+    case guide, list
+    var id: String { rawValue }
+    var label: String { self == .guide ? "Guide" : "List" }
+}
+
+enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
+    case frosted, dark
+    var id: String { rawValue }
+    var label: String { self == .frosted ? "Frosted" : "Dark" }
+}
+
+/// A Live TV group the user made from channels in the provider's groups.
+struct ChannelFolder: Codable, Hashable, Identifiable {
+    var id: String
+    var name: String
+    var channelIDs: [Int]
+}
+
+/// The rows that can appear on Home, in their default order.
+enum HomeRow: String, CaseIterable, Identifiable {
+    case myList, trending, channels, teams, popularMovies, popularSeries, cinemas, airingToday, topRated
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .myList: return "My List"
+        case .trending: return "Trending Now"
+        case .channels: return "Favourite Channels"
+        case .teams: return "My Teams"
+        case .popularMovies: return "Popular Movies"
+        case .popularSeries: return "Popular Series"
+        case .cinemas: return "New in Cinemas"
+        case .airingToday: return "Airing Today"
+        case .topRated: return "Top Rated Movies"
+        }
+    }
+}
+
 // MARK: - Preferences
 
 /// Non-secret app preferences, stored in UserDefaults.
@@ -99,6 +139,21 @@ struct Preferences: Codable, Equatable {
 
     // Sports
     var favouriteTeams: [FavouriteTeam] = []
+    var sportsDaysAhead = 14
+
+    // Calendar
+    var calendarEpisodesPerSeries = 2
+    var calendarDaysAhead = 90
+
+    // Home screen: row ids in order, and the ones switched off
+    var homeRows: [String] = HomeRow.allCases.map(\.rawValue)
+    var hiddenHomeRows: Set<String> = []
+
+    // Appearance
+    var backgroundStyle: BackgroundStyle = .frosted
+
+    // Search
+    var recentSearches: [String] = []
 
     // Live TV
     var liveFormat: LiveStreamFormat = .hls
@@ -112,6 +167,17 @@ struct Preferences: Codable, Equatable {
     var hiddenCategoryIDs: Set<String> = []
     var favouriteChannelIDs: Set<Int> = []
     var lastCategoryID: String?
+    var liveLayout: LiveLayout = .guide
+    var guideHours = 2
+    var guidePreview = true
+    var showChannelNumbers = false
+    var hiddenChannelIDs: Set<Int> = []
+    var folders: [ChannelFolder] = []
+    /// How often guide data is re-downloaded: hours, 0 = every launch, -1 = only manually.
+    var epgRefreshHours = 6
+    /// The provider's own movie and series libraries (VOD). Off by default.
+    var showProviderMovies = false
+    var showProviderSeries = false
 
     private static let key = "preferences.v1"
 

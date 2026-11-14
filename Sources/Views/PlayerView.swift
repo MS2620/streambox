@@ -578,6 +578,8 @@ private struct AetherPlaybackView: View {
             )
         }
         do {
+            // The Live TV guide preview plays muted on the same engine.
+            engine.volume = 1
             _ = try await engine.load(url: current.url, options: options)
             engine.videoGravity = fillScreen ? .resizeAspectFill : .resizeAspect
         } catch is CancellationError {
