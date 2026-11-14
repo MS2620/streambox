@@ -664,6 +664,15 @@ private struct AetherPlaybackView: View {
                     reload()
                     closePanel()
                 })
+                if let live = current.live, live.channels.indices.contains(live.index) {
+                    let channel = live.channels[live.index]
+                    options.append(PanelOption(id: "multiview", title: "Watch in multiview") {
+                        closePanel()
+                        // Opens once the player has closed.
+                        MultiviewStore.shared.add(channel, openAfter: .milliseconds(600))
+                        dismiss()
+                    })
+                }
                 return options
             } else {
                 var options = [PanelOption(id: "restart", title: "Restart from the beginning") {

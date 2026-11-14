@@ -27,6 +27,7 @@ struct RootView: View {
     @State private var reminderPlayback: PlaybackRequest?
     /// Opened from a Top Shelf card.
     @State private var deepLink: DeepLink?
+    @ObservedObject private var multiview = MultiviewStore.shared
 
     var body: some View {
         tabs
@@ -56,6 +57,12 @@ struct RootView: View {
                             case .match(let fixture): FixtureDetailView(fixture: fixture)
                             }
                         }
+                    }
+            }
+            .background {
+                Color.clear
+                    .fullScreenCover(isPresented: $multiview.presented) {
+                        MultiviewView()
                     }
             }
             .onOpenURL { url in
