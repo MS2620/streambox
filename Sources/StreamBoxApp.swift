@@ -25,6 +25,8 @@ struct RootView: View {
     @State private var tab: AppTab = .home
     /// A channel opened from a reminder.
     @State private var reminderPlayback: PlaybackRequest?
+    /// Opened from a Top Shelf card.
+    @State private var deepLink: DeepLink?
 
     var body: some View {
         tabs
@@ -44,6 +46,22 @@ struct RootView: View {
             .fullScreenCover(item: $reminderPlayback) { request in
                 PlayerView(request: request).ignoresSafeArea()
             }
+            .background {
+                // A separate view, so this cover doesn't clash with the reminder one.
+                Color.clear
+                    .fullScreenCover(item: $deepLink) { link in
+                        NavigationStack {
+                            switch link {
+                            case .resume(let target): StreamListView(target: target)
+                            case .match(let fixture): FixtureDetailView(fixture: fixture)
+                            }
+                        }
+                    }
+            }
+            .onOpenURL { url in
+                deepLink = DeepLink(url: url)
+            }
+            .task { TopShelfPublisher.publish() }
     }
 
     private var tabs: some View {

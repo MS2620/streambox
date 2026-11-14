@@ -37,6 +37,13 @@ final class LiveScores: ObservableObject {
         return tracked.values.filter { !ids.contains($0.id) && $0.date > cutoff && $0.date <= Date() }
     }
 
+    /// Games on now, soonest kick-off first (for the Top Shelf).
+    var liveFixtures: [Fixture] {
+        underWay.filter { score(for: $0)?.phase != nil || $0.date <= Date() }.sorted { $0.date < $1.date }
+    }
+
+    func fixture(id: String) -> Fixture? { tracked[id] }
+
     /// Games that have kicked off and haven't finished.
     private var underWay: [Fixture] {
         let now = Date()
@@ -62,5 +69,6 @@ final class LiveScores: ObservableObject {
         lastRefresh = Date()
         let fresh = await ESPNClient().liveScores(for: games)
         for (id, score) in fresh { scores[id] = score }
+        TopShelfPublisher.publish()
     }
 }
