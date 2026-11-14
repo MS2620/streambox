@@ -36,7 +36,7 @@ struct RootView: View {
             Tab("Live TV", systemImage: "antenna.radiowaves.left.and.right", value: AppTab.live) {
                 LiveTVView()
             }
-            // Sports, Calendar and Search show only their icon, which keeps the bar on one line.
+            // Sports, Calendar, Search and Settings show only their icon, which keeps the bar on one line.
             Tab(value: AppTab.sports) {
                 SportsView()
             } label: {
@@ -55,8 +55,11 @@ struct RootView: View {
                 Image(systemName: "magnifyingglass")
                     .accessibilityLabel("Search")
             }
-            Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
+            Tab(value: AppTab.settings) {
                 SettingsView()
+            } label: {
+                Image(systemName: "gearshape")
+                    .accessibilityLabel("Settings")
             }
         }
     }

@@ -344,12 +344,13 @@ struct FixtureDetailView: View {
     @EnvironmentObject var settings: AppSettings
     let fixture: Fixture
 
-    @State private var result = ChannelSearch()
-    @State private var searching = false
-    @State private var searched = false
+    @ObservedObject private var store = ChannelSearchStore.shared
     @State private var playback: PlaybackRequest?
     @State private var showingSportsChannels = false
 
+    private var entry: ChannelSearchStore.Entry? { store.entries[fixture.id] }
+    private var result: ChannelSearch { entry?.result ?? ChannelSearch() }
+    private var searching: Bool { entry?.searching ?? true }
     private var matches: [ChannelMatch] { result.matches }
 
     /// The provider's guide doesn't reach the fixture yet. Without the whole
@@ -402,8 +403,9 @@ struct FixtureDetailView: View {
                 }
 
                 watchPanel
-                if !matches.isEmpty {
-                    SettingsNote("Found by searching every channel's TV guide at kick-off time. Hidden groups and channels are skipped.")
+                if !matches.isEmpty && !searching {
+                    SettingsNote([result.details, "Hidden groups and channels are skipped."]
+                        .compactMap { $0 }.joined(separator: " "))
                 }
 
                 if !fixture.broadcasts.isEmpty {
@@ -418,13 +420,18 @@ struct FixtureDetailView: View {
             .padding(.vertical, 60)
         }
         .background(AppBackground())
-        .task { await search(force: false) }
+        .task { search(force: false) }
         .fullScreenCover(item: $playback) { request in
             PlayerView(request: request).ignoresSafeArea()
         }
         .sheet(isPresented: $showingSportsChannels) {
             SportsChannelsSheet()
         }
+    }
+
+    private var progressText: String {
+        guard let entry, entry.total > 0 else { return "Searching your TV guide…" }
+        return "Checking channels… \(entry.checked) of \(entry.total)"
     }
 
     /// "Portugal – Denmark" (ESPN writes "Portugal v Denmark").
@@ -463,6 +470,17 @@ struct FixtureDetailView: View {
                     }
                 }
                 .padding(.bottom, 6)
+                if searching {
+                    // More may still turn up while channels are being checked.
+                    HStack(spacing: 14) {
+                        ProgressView()
+                        Text(progressText)
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 16)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -483,8 +501,8 @@ struct FixtureDetailView: View {
     private var guideSection: some View {
         if !settings.xtream.isConfigured {
             note("Add your IPTV login in Settings → Connections to find this in your TV guide.")
-        } else if searching || !searched {
-            ProgressView("Searching your TV guide…")
+        } else if searching {
+            ProgressView(progressText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
         } else {
@@ -510,7 +528,7 @@ struct FixtureDetailView: View {
             }
             HStack(spacing: 16) {
                 Button {
-                    Task { await search(force: true) }
+                    search(force: true)
                 } label: {
                     PillLabel(title: "Check again", icon: "arrow.clockwise")
                 }
@@ -550,19 +568,9 @@ struct FixtureDetailView: View {
         return [entry.title, times, settings.xtream.displayName].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
-    private func search(force: Bool) async {
-        guard settings.xtream.isConfigured, !searching else { return }
-        searching = true
-        let prefs = settings.prefs
-        var preferred = prefs.favouriteChannelIDs
-        for folder in prefs.folders { preferred.formUnion(folder.channelIDs) }
-        result = await ChannelFinder.search(for: fixture, client: settings.xtreamClient,
-                                            teams: prefs.favouriteTeams,
-                                            hiddenCategories: prefs.hiddenCategoryIDs,
-                                            hiddenChannels: prefs.hiddenChannelIDs,
-                                            preferred: preferred, force: force)
-        searching = false
-        searched = true
+    private func search(force: Bool) {
+        guard settings.xtream.isConfigured else { return }
+        store.start(fixture, settings: settings, force: force)
     }
 
     private func play(_ index: Int) {

@@ -560,11 +560,16 @@ private struct AetherPlaybackView: View {
             options = LoadOptions(
                 httpHeaders: current.httpHeaders,
                 upscalesLowResolutionVideo: prefs.upscaleLowResolution,
-                matchContentEnabled: prefs.matchContent,
+                // Switching the TV's refresh rate blanks the screen for a moment on every
+                // channel change, so live TV only does it when asked (Settings → Live TV).
+                matchContentEnabled: prefs.matchContent && prefs.matchContentLive,
                 isLive: true,
                 dvrWindowSeconds: prefs.timeshiftMinutes > 0 ? Double(prefs.timeshiftMinutes * 60) : nil,
                 liveJoinProfile: prefs.channelSwitching == .fast ? .fastZap : .standard,
-                nativeRemoteHLS: current.url.pathExtension.lowercased() == "m3u8",
+                // The engine's own live pipeline rather than Apple's HLS player: Apple's
+                // can play the sound but show no picture for some channels (HEVC or
+                // interlaced broadcasts). The engine reads HLS addresses itself.
+                nativeRemoteHLS: false,
                 preferredAudioLanguages: [prefs.audioLanguage],
                 preferredSubtitleLanguages: subtitleLanguages,
                 audioShaping: shaping

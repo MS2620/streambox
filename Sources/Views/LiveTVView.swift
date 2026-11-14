@@ -792,7 +792,8 @@ private struct LivePreview: View {
                 matchContentEnabled: false,
                 isLive: true,
                 liveJoinProfile: .fastZap,
-                nativeRemoteHLS: url.pathExtension.lowercased() == "m3u8",
+                // Same pipeline as the full-screen player (see PlayerView).
+                nativeRemoteHLS: false,
                 preferredAudioLanguages: [settings.prefs.audioLanguage]
             )
             _ = try? await engine.load(url: url, options: options)

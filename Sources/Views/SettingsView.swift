@@ -268,8 +268,9 @@ struct LiveTVSettingsView: View {
                                   options: ChannelSwitching.allCases.map { ($0, $0.label) })
                 SettingsOptionRow("Timeshift (pause & rewind)", icon: "gobackward", selection: $settings.prefs.timeshiftMinutes,
                                   options: [(0, "Off"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours")])
+                SettingsToggleRow("Match frame rate on live channels", icon: "tv", isOn: $settings.prefs.matchContentLive)
             }
-            SettingsNote("Try MPEG-TS if channels fail on HLS. Stable switching starts slower but buffers more. Timeshift keeps recent video on the Apple TV so you can pause and rewind live channels.")
+            SettingsNote("Try MPEG-TS if channels fail on HLS. Stable switching starts slower but buffers more. Timeshift keeps recent video on the Apple TV so you can pause and rewind live channels. Matching the frame rate makes the TV go black for a moment each time you change channel, so it's off for live TV unless you turn it on here.")
 
             GlassPanel("Provider compatibility") {
                 SettingsOptionRow("User agent", icon: "person.badge.key", selection: $settings.prefs.iptvUserAgent,

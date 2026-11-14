@@ -650,6 +650,66 @@ struct ChannelMatch: Identifiable {
     var id: Int { channel.id }
 }
 
+/// Searches for a fixture's channels keep running when its page is left, so
+/// coming back shows what was found instead of starting again.
+@MainActor
+final class ChannelSearchStore: ObservableObject {
+    static let shared = ChannelSearchStore()
+
+    struct Entry {
+        var result = ChannelSearch()
+        var searching = true
+        var checked = 0
+        var total = 0
+        var started = Date()
+    }
+
+    @Published private(set) var entries: [String: Entry] = [:]
+    private var tasks: [String: Task<Void, Never>] = [:]
+    /// Finished results are reused for this long.
+    private static let lifetime: TimeInterval = 10 * 60
+
+    func start(_ fixture: Fixture, settings: AppSettings, force: Bool) {
+        let key = fixture.id
+        if !force, let entry = entries[key],
+           entry.searching || Date().timeIntervalSince(entry.started) < Self.lifetime {
+            return
+        }
+        tasks[key]?.cancel()
+        entries[key] = Entry()
+
+        let prefs = settings.prefs
+        var preferred = prefs.favouriteChannelIDs
+        for folder in prefs.folders { preferred.formUnion(folder.channelIDs) }
+        let client = settings.xtreamClient
+        let teams = prefs.favouriteTeams
+        let hiddenCategories = prefs.hiddenCategoryIDs
+        let hiddenChannels = prefs.hiddenChannelIDs
+
+        tasks[key] = Task { [weak self] in
+            let result = await ChannelFinder.search(
+                for: fixture, client: client, teams: teams,
+                hiddenCategories: hiddenCategories, hiddenChannels: hiddenChannels,
+                preferred: preferred, force: force,
+                progress: { matches, checked, total in
+                    await MainActor.run {
+                        guard var entry = self?.entries[key], entry.searching else { return }
+                        entry.result.matches = matches
+                        entry.checked = checked
+                        entry.total = total
+                        self?.entries[key] = entry
+                    }
+                }
+            )
+            guard !Task.isCancelled, var entry = self?.entries[key] else { return }
+            entry.result = result
+            entry.searching = false
+            self?.entries[key] = entry
+            self?.tasks[key] = nil
+        }
+    }
+}
+
 struct ChannelSearch {
     var matches: [ChannelMatch] = []
     /// Where the provider's guide ends, when the whole guide could be read.
@@ -677,9 +737,12 @@ enum ChannelFinder {
     ///   - teams: the followed teams; the guide is read once for all of them.
     ///   - preferred: favourite and folder channels, listed first among equal matches.
     ///   - force: download the guide again first.
+    ///   - progress: called as channels are checked one by one, with the matches so far,
+    ///     how many channels have been checked and how many will be.
     static func search(for fixture: Fixture, client: XtreamClient, teams: [FavouriteTeam],
                        hiddenCategories: Set<String>, hiddenChannels: Set<Int>,
-                       preferred: Set<Int>, force: Bool = false) async -> ChannelSearch {
+                       preferred: Set<Int>, force: Bool = false,
+                       progress: (@Sendable ([ChannelMatch], Int, Int) async -> Void)? = nil) async -> ChannelSearch {
         let all: [XtreamChannel]
         do {
             all = try await XtreamCache.shared.liveStreams(client)
@@ -720,7 +783,8 @@ enum ChannelFinder {
                 }
             }
             if !best.isEmpty {
-                return ChannelSearch(matches: rank(Array(best.values), preferred: preferred), guideEnds: guideEnds)
+                return ChannelSearch(matches: rank(Array(best.values), preferred: preferred), guideEnds: guideEnds,
+                                     details: "Found in the full TV guide.")
             }
             notes.append("Full guide: \(guide.totalListings) listings, \(guide.programmes.count) about your teams, "
                          + "\(onAir) on at that time, \(byGuideID.count) channels linked to it.")
@@ -730,10 +794,10 @@ enum ChannelFinder {
 
         // Ask channel by channel instead.
         let (matches, searched) = await searchChannelByChannel(streams: streams, client: client, fixture: fixture,
-                                                               matcher: matcher, start: start, preferred: preferred)
+                                                               matcher: matcher, start: start, preferred: preferred,
+                                                               progress: progress)
         notes.append("Checked \(searched) channels one by one.")
-        return ChannelSearch(matches: matches, guideEnds: guideEnds,
-                             details: matches.isEmpty ? notes.joined(separator: " ") : nil)
+        return ChannelSearch(matches: matches, guideEnds: guideEnds, details: notes.joined(separator: " "))
     }
 
     /// Best first; favourites and folder channels first among equals, then HD.
@@ -778,8 +842,9 @@ enum ChannelFinder {
     /// Favourites and folders first, then channels from the teams' countries
     /// ("PT| RTP 1", a "Portugal" group), then sports channels.
     private static func searchChannelByChannel(streams: [XtreamChannel], client: XtreamClient, fixture: Fixture,
-                                               matcher: FixtureMatcher, start: Date,
-                                               preferred: Set<Int>) async -> ([ChannelMatch], Int) {
+                                               matcher: FixtureMatcher, start: Date, preferred: Set<Int>,
+                                               progress: (@Sendable ([ChannelMatch], Int, Int) async -> Void)?)
+        async -> ([ChannelMatch], Int) {
         let cache = XtreamCache.shared
         let categories = (try? await cache.liveCategories(client)) ?? []
         let sportCategories = Set(categories
@@ -819,20 +884,28 @@ enum ChannelFinder {
         let candidates = Array((first + country + sports).prefix(500))
 
         var results: [ChannelMatch] = []
+        var checked = 0
+        let total = candidates.count
+        await progress?([], 0, total)
         var queue = candidates.makeIterator()
         await withTaskGroup(of: ChannelMatch?.self) { group in
-            for _ in 0..<8 {
+            for _ in 0..<16 {
                 guard let channel = queue.next() else { break }
                 group.addTask { await match(channel, start: start, matcher: matcher, client: client) }
             }
             while let result = await group.next() {
+                checked += 1
                 if let result { results.append(result) }
+                // Show matches as soon as they're found, and the count every so often.
+                if result != nil || checked % 10 == 0 || checked == total {
+                    await progress?(rank(results, preferred: preferred), checked, total)
+                }
                 if let channel = queue.next() {
                     group.addTask { await match(channel, start: start, matcher: matcher, client: client) }
                 }
             }
         }
-        return (rank(results, preferred: preferred), candidates.count)
+        return (rank(results, preferred: preferred), total)
     }
 
     private static func match(_ channel: XtreamChannel, start: Date, matcher: FixtureMatcher,

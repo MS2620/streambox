@@ -159,6 +159,8 @@ struct Preferences: Codable, Equatable {
     var liveFormat: LiveStreamFormat = .hls
     var channelSwitching: ChannelSwitching = .fast
     var timeshiftMinutes = 0
+    /// Switch the TV's refresh rate for live channels too. Off: avoids a black flash on every zap.
+    var matchContentLive = false
     var showEPG = true
     var channelSort: ChannelSort = .server
     var favouritesFirst = true

@@ -418,8 +418,8 @@ struct StreamListView: View {
             }
 
             if !results.isEmpty {
-                ScrollView(.horizontal) {
-                HStack(spacing: 12) {
+                // Wraps onto a second row when there are more filters than fit.
+                FlowLayout(spacing: 12, rowSpacing: 14) {
                     Button {
                         filter = nil
                     } label: {
@@ -436,8 +436,6 @@ struct StreamListView: View {
                     }
                 }
                 .padding(.vertical, 10)
-                }
-                .scrollClipDisabled()
 
                 Text(settings.prefs.streamSort == .quality
                      ? "Sorted best quality first · change in Settings › Streams"
