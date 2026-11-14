@@ -74,6 +74,12 @@ enum LiveLayout: String, Codable, CaseIterable, Identifiable {
     var label: String { self == .guide ? "Guide" : "List" }
 }
 
+/// The row the Apple TV Top Shelf shows after live games and Continue Watching.
+enum TopShelfExtra: String, Codable, CaseIterable {
+    case upcoming, myList
+    var label: String { self == .upcoming ? "Coming up" : "My List" }
+}
+
 enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
     case frosted, dark
     var id: String { rawValue }
@@ -148,6 +154,7 @@ struct Preferences: Codable, Equatable {
     // Home screen: row ids in order, and the ones switched off
     var homeRows: [String] = HomeRow.allCases.map(\.rawValue)
     var hiddenHomeRows: Set<String> = []
+    var topShelfExtra: TopShelfExtra = .upcoming
 
     // Appearance
     var backgroundStyle: BackgroundStyle = .frosted

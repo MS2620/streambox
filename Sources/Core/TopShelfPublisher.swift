@@ -53,8 +53,9 @@ enum TopShelfPublisher {
                                     progress: entry.fraction)
             }
 
+        let extra = settings?.prefs.topShelfExtra ?? .upcoming
         let liveIDs = Set(LiveScores.shared.liveFixtures.map(\.id))
-        snapshot.upcoming = LiveScores.shared.upcomingFixtures
+        snapshot.upcoming = extra != .upcoming ? [] : LiveScores.shared.upcomingFixtures
             .filter { !liveIDs.contains($0.id) }
             .prefix(6)
             .map { fixture in
@@ -67,7 +68,7 @@ enum TopShelfPublisher {
                                     link: "streambox://match?id=\(encode(fixture.id))")
             }
 
-        snapshot.myList = (settings?.prefs.myList ?? [])
+        snapshot.myList = extra != .myList ? [] : (settings?.prefs.myList ?? [])
             .filter { $0.backdropURL != nil }
             .prefix(10)
             .map(titleCard)
