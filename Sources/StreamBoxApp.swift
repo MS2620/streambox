@@ -55,6 +55,9 @@ struct RootView: View {
                             switch link {
                             case .resume(let target): StreamListView(target: target)
                             case .match(let fixture): FixtureDetailView(fixture: fixture)
+                            case .title(let item):
+                                DetailView(item: item)
+                                    .navigationDestination(for: TMDBItem.self) { DetailView(item: $0) }
                             }
                         }
                     }
@@ -68,7 +71,9 @@ struct RootView: View {
             .onOpenURL { url in
                 deepLink = DeepLink(url: url)
             }
-            .task { TopShelfPublisher.publish() }
+            .task { await TopShelfPublisher.start(settings) }
+            // My List changes go straight to the shelf.
+            .onChange(of: settings.prefs.myList) { _, _ in TopShelfPublisher.publish() }
             .overlay {
                 if !player.isPresentingPlayer { UpdateCard() }
             }

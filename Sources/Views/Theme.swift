@@ -362,3 +362,12 @@ struct ProgressStrip: View {
         .frame(height: 7)
     }
 }
+
+extension View {
+    /// Makes this row a full-width target for the remote: pressing up/down (or left/right)
+    /// lands in it even when nothing sits directly in line with the focused item.
+    func focusRow() -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .focusSection()
+    }
+}

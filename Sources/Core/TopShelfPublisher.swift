@@ -5,6 +5,30 @@ import TVServices
 @MainActor
 enum TopShelfPublisher {
     private static var lastPublished: TopShelfSnapshot?
+    private static weak var settings: AppSettings?
+    private static var trendingItems: [TMDBItem] = []
+    /// Titles on the shelf, so a card's streambox://title link can open them.
+    private(set) static var titles: [String: TMDBItem] = [:]
+
+    /// Called once from the root view: My List comes from settings, and Trending is the fallback.
+    static func start(_ settings: AppSettings) async {
+        self.settings = settings
+        publish()
+        guard !settings.tmdbToken.isEmpty else { return }
+        let tmdb = TMDBClient(token: settings.tmdbToken)
+        async let movies = try? tmdb.trending(.movie)
+        async let shows = try? tmdb.trending(.tv)
+        let all = ((await movies) ?? []).prefix(5) + ((await shows) ?? []).prefix(5)
+        trendingItems = Array(all)
+        publish()
+    }
+
+    private static func titleCard(_ item: TMDBItem) -> TopShelfItem {
+        titles[item.uid] = item
+        return TopShelfItem(id: "title-\(item.uid)", title: item.displayTitle,
+                            imageURL: item.backdropURL?.absoluteString,
+                            link: "streambox://title?uid=\(encode(item.uid))")
+    }
 
     static func publish() {
         var snapshot = TopShelfSnapshot()
@@ -43,9 +67,19 @@ enum TopShelfPublisher {
                                     link: "streambox://match?id=\(encode(fixture.id))")
             }
 
+        snapshot.myList = (settings?.prefs.myList ?? [])
+            .filter { $0.backdropURL != nil }
+            .prefix(10)
+            .map(titleCard)
+
+        if snapshot.isEmpty {
+            snapshot.trending = trendingItems.filter { $0.backdropURL != nil }.map(titleCard)
+        }
+
         // Only bother tvOS when something actually changed.
         guard snapshot.live != lastPublished?.live || snapshot.continueWatching != lastPublished?.continueWatching
-                || snapshot.upcoming != lastPublished?.upcoming else { return }
+                || snapshot.upcoming != lastPublished?.upcoming || snapshot.myList != lastPublished?.myList
+                || snapshot.trending != lastPublished?.trending else { return }
         lastPublished = snapshot
         TopShelfStore.write(snapshot)
         TVTopShelfContentProvider.topShelfContentDidChange()
@@ -60,11 +94,13 @@ enum TopShelfPublisher {
 enum DeepLink: Identifiable {
     case resume(StreamTarget)
     case match(Fixture)
+    case title(TMDBItem)
 
     var id: String {
         switch self {
         case .resume(let target): return "resume-\(target.id)"
         case .match(let fixture): return "match-\(fixture.id)"
+        case .title(let item): return "title-\(item.uid)"
         }
     }
 
@@ -88,6 +124,9 @@ enum DeepLink: Identifiable {
         case "match":
             guard let id = value("id"), let fixture = LiveScores.shared.fixture(id: id) else { return nil }
             self = .match(fixture)
+        case "title":
+            guard let uid = value("uid"), let item = TopShelfPublisher.titles[uid] else { return nil }
+            self = .title(item)
         default:
             return nil
         }
