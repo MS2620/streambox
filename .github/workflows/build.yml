@@ -3,8 +3,18 @@ name: Build
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md"]   # README edits don't need a build
   pull_request:
   workflow_dispatch:
+
+# A newer push cancels the build still running for an older one.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
 
 jobs:
   # Free: compiles the app (unsigned) on every push so you know the code builds.
@@ -12,6 +22,16 @@ jobs:
     runs-on: xcode-27  # AetherEngine needs Xcode 27
     steps:
       - uses: actions/checkout@v4
+
+      # Reuse downloaded packages (AetherEngine, FFmpeg…) and their compiled
+      # output from the last build, so only StreamBox's own code recompiles.
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: derived-${{ runner.os }}-${{ hashFiles('project.yml') }}-${{ github.sha }}
+          restore-keys: |
+            derived-${{ runner.os }}-${{ hashFiles('project.yml') }}-
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -29,12 +49,14 @@ jobs:
             -destination 'generic/platform=tvOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            DEBUG_INFORMATION_FORMAT=dwarf \
             build
 
       # Unsigned IPA for sideloading (Sideloadly / atvloadly re-sign it with your Apple ID)
       - name: Package unsigned IPA
         run: |
-          mkdir -p Payload
+          rm -rf Payload && mkdir -p Payload
           cp -R build/Build/Products/Release-appletvos/StreamBox.app Payload/
           zip -qry StreamBox-unsigned.ipa Payload
 
