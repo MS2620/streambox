@@ -10,10 +10,8 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
 packages:
   AetherEngine:
-    # Our fork: lets the automatic upscaler (MetalFX) take 1080p.
-    # Upstream: https://github.com/superuser404notfound/AetherEngine
-    url: https://github.com/MS2620/AetherEngine
-    branch: main
+    url: https://github.com/superuser404notfound/AetherEngine
+    from: 7.66.1
 targets:
   StreamBox:
     type: application

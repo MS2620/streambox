@@ -49,19 +49,6 @@ enum MaxResolution: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// What the 1080p upscaler (AetherEngine's line-art network, the only one that takes 1080p) runs on.
-enum Upscale1080p: String, Codable, CaseIterable, Identifiable {
-    case off, animation, everything
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .off: return "Off"
-        case .animation: return "Animation only"
-        case .everything: return "Everything"
-        }
-    }
-}
-
 enum StreamSort: String, Codable, CaseIterable, Identifiable {
     case addon, quality
     var id: String { rawValue }
@@ -139,8 +126,6 @@ struct Preferences: Codable, Equatable {
     var seekForwardSeconds = 30
     var matchContent = true
     var upscaleLowResolution = false
-    /// Upscales 1080p video with the line-art upscaler, for animation or for everything.
-    var upscale1080p: Upscale1080p = .off
     var dialogueBoost = false
     var nightMode = false
 

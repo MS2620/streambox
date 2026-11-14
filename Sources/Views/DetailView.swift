@@ -13,8 +13,6 @@ struct StreamTarget: Identifiable, Hashable {
     var detail: String? = nil
     var posterURL: URL? = nil
     var backdropURL: URL? = nil
-    /// Cartoons and anime may use the line-art upscaler (Settings → Player).
-    var isAnimation = false
 }
 
 struct DetailView: View {
@@ -32,8 +30,6 @@ struct DetailView: View {
     private var imdbID: String? { details?.externalIds?.imdbId }
     private var seasons: [TVSeasonSummary] { (details?.seasons ?? []).filter { $0.seasonNumber > 0 } }
     private var inMyList: Bool { settings.prefs.myList.contains { $0.uid == item.uid } }
-    /// TMDB's "Animation" genre (16), for movies and series alike.
-    private var isAnimation: Bool { (item.genreIds ?? []).contains(16) }
 
     private var recommendations: [TMDBItem] {
         (details?.recommendations?.results ?? []).map { rec in
@@ -171,8 +167,7 @@ struct DetailView: View {
                     streamTarget = StreamTarget(type: "movie", id: imdbID, title: item.displayTitle,
                                                 subtitle: item.year, overview: item.overview,
                                                 kicker: "MOVIE", detail: item.year,
-                                                posterURL: item.posterURL, backdropURL: item.backdropURL,
-                                                isAnimation: isAnimation)
+                                                posterURL: item.posterURL, backdropURL: item.backdropURL)
                 }
             } label: {
                 Label("Play", systemImage: "play.fill")
@@ -259,8 +254,7 @@ struct DetailView: View {
             kicker: "SEASON \(episode.seasonNumber) · EPISODE \(episode.episodeNumber)",
             detail: episode.name,
             posterURL: item.posterURL,
-            backdropURL: item.backdropURL,
-            isAnimation: isAnimation
+            backdropURL: item.backdropURL
         )
     }
 
@@ -561,9 +555,7 @@ struct StreamListView: View {
     private func play(_ result: FoundStream) async {
         guard let url = result.stream.playableURL else { return }
         playback = PlaybackRequest(url: url, title: target.title, subtitle: target.subtitle,
-                                   overview: target.overview, sourceName: result.addonName,
-                                   isAnimation: target.isAnimation,
-                                   sourceLines: result.stream.resolution)
+                                   overview: target.overview, sourceName: result.addonName)
     }
 }
 

@@ -1,6 +1,4 @@
 import SwiftUI
-import Metal
-import MetalFX
 import Combine
 import AVFoundation
 import AetherEngine
@@ -26,10 +24,6 @@ struct PlaybackRequest: Identifiable {
     var isLive: Bool = false
     var httpHeaders: [String: String] = [:]
     var live: LiveContext? = nil
-    /// Cartoons and anime: may use the line-art upscaler, which also takes 1080p.
-    var isAnimation = false
-    /// Lines the addon's label claims (1080, 720…), 0 when unknown.
-    var sourceLines = 0
 }
 
 /// Full-screen player for live TV, movies and series, built on AetherEngine.
@@ -613,30 +607,6 @@ private struct AetherPlaybackView: View {
 
     // MARK: - Loading
 
-    /// Animation takes the line-art upscaler (Anime4K). Live action takes the automatic one
-    /// (super resolution below 1080p, MetalFX at 1080p, via our AetherEngine fork), unless this
-    /// Apple TV has no MetalFX: then 1080p falls back to line art.
-    private func vodScaler(wants1080p: Bool, prefs: Preferences) -> UpscaleScaler {
-        guard wants1080p else { return .automatic }
-        if current.isAnimation { return .lineArt }
-        if Self.metalFXAvailable { return .automatic }
-        let lines = current.sourceLines
-        if prefs.upscaleLowResolution, lines > 0, lines < 1080 { return .automatic }
-        return .lineArt
-    }
-
-    /// The same test the engine makes before it uses MetalFX (tvOS 27.1 and a supported GPU).
-    static let metalFXAvailable: Bool = {
-        #if targetEnvironment(simulator)
-        return false
-        #else
-        if #available(tvOS 27.1, *) {
-            return MTLCreateSystemDefaultDevice().map { MTLFXSpatialScalerDescriptor.supportsDevice($0) } ?? false
-        }
-        return false
-        #endif
-    }()
-
     private func load() async {
         loadError = nil
         let prefs = settings.prefs
@@ -653,10 +623,7 @@ private struct AetherPlaybackView: View {
                 // which blanks the screen for a moment on every channel.
                 suppressDisplayCriteria: !matchLive,
                 httpHeaders: current.httpHeaders,
-                upscalesLowResolutionVideo: prefs.upscaleLowResolution || prefs.upscale1080p == .everything,
-                // Live channels are live action: MetalFX where this Apple TV has it,
-                // otherwise the line-art upscaler, the other one that takes 1080p.
-                upscaleScaler: prefs.upscale1080p == .everything && !Self.metalFXAvailable ? .lineArt : .automatic,
+                upscalesLowResolutionVideo: prefs.upscaleLowResolution,
                 // Switching the TV's refresh rate blanks the screen for a moment on every
                 // channel change, so live TV only does it when asked (Settings → Live TV).
                 matchContentEnabled: prefs.matchContent && prefs.matchContentLive,
@@ -672,12 +639,9 @@ private struct AetherPlaybackView: View {
                 audioShaping: shaping
             )
         } else {
-            let wants1080p = prefs.upscale1080p == .everything
-                || (prefs.upscale1080p == .animation && current.isAnimation)
             options = LoadOptions(
                 httpHeaders: current.httpHeaders,
-                upscalesLowResolutionVideo: prefs.upscaleLowResolution || wants1080p,
-                upscaleScaler: vodScaler(wants1080p: wants1080p, prefs: prefs),
+                upscalesLowResolutionVideo: prefs.upscaleLowResolution,
                 matchContentEnabled: prefs.matchContent,
                 preferredAudioLanguages: [prefs.audioLanguage],
                 preferredSubtitleLanguages: subtitleLanguages,
@@ -838,8 +802,7 @@ private struct AetherPlaybackView: View {
         var copy = current
         copy = PlaybackRequest(url: copy.url, title: copy.title, subtitle: copy.subtitle, overview: copy.overview,
                                artworkURL: copy.artworkURL, sourceName: copy.sourceName, isLive: copy.isLive,
-                               httpHeaders: copy.httpHeaders, live: copy.live,
-                               isAnimation: copy.isAnimation, sourceLines: copy.sourceLines)
+                               httpHeaders: copy.httpHeaders, live: copy.live)
         retuneCount = 0
         current = copy
     }
