@@ -225,6 +225,7 @@ struct AccountsSettingsView: View {
             }
         }
         .navigationTitle("Connections")
+        .pickerStyle(.menu)
     }
 
     private func addAddon() async {
@@ -323,6 +324,7 @@ struct LiveTVSettingsView: View {
             }
         }
         .navigationTitle("Live TV")
+        .pickerStyle(.menu)
     }
 }
 
@@ -359,6 +361,7 @@ struct HiddenCategoriesView: View {
             }
         }
         .navigationTitle("Categories")
+        .pickerStyle(.menu)
         .task {
             guard settings.xtream.isConfigured else {
                 error = "Add your Xtream login in Accounts first."
@@ -416,6 +419,7 @@ struct PlayerSettingsView: View {
             }
         }
         .navigationTitle("Player")
+        .pickerStyle(.menu)
     }
 }
 
@@ -448,6 +452,7 @@ struct SubtitleSettingsView: View {
             }
         }
         .navigationTitle("Subtitles")
+        .pickerStyle(.menu)
     }
 }
 
@@ -471,6 +476,7 @@ struct StreamSettingsView: View {
             }
         }
         .navigationTitle("Streams")
+        .pickerStyle(.menu)
     }
 }
 
@@ -495,5 +501,6 @@ struct ContentSettingsView: View {
             }
         }
         .navigationTitle("Content")
+        .pickerStyle(.menu)
     }
 }

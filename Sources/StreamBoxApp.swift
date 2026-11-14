@@ -17,11 +17,11 @@ struct StreamBoxApp: App {
 struct RootView: View {
     var body: some View {
         TabView {
-            CatalogView(sections: Catalog.home)
+            CatalogView(hero: Catalog.homeHero, sections: Catalog.home, showsFavouriteChannels: true)
                 .tabItem { Label("Home", systemImage: "house") }
-            CatalogView(sections: Catalog.movies)
+            CatalogView(hero: Catalog.moviesHero, sections: Catalog.movies)
                 .tabItem { Label("Movies", systemImage: "film") }
-            CatalogView(sections: Catalog.series)
+            CatalogView(hero: Catalog.seriesHero, sections: Catalog.series)
                 .tabItem { Label("Series", systemImage: "play.tv") }
             LiveTVView()
                 .tabItem { Label("Live TV", systemImage: "antenna.radiowaves.left.and.right") }

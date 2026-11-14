@@ -13,6 +13,7 @@ struct TMDBItem: Decodable, Hashable {
     let backdropPath: String?
     let releaseDate: String?
     let firstAirDate: String?
+    let voteAverage: Double?
     var mediaType: String?
 
     var kind: MediaType { MediaType(rawValue: mediaType ?? "") ?? (title != nil ? .movie : .tv) }
@@ -20,6 +21,10 @@ struct TMDBItem: Decodable, Hashable {
     var displayTitle: String { title ?? name ?? "Untitled" }
     var year: String? { (releaseDate ?? firstAirDate).flatMap { $0.count >= 4 ? String($0.prefix(4)) : nil } }
     var posterURL: URL? { posterPath.flatMap { URL(string: "https://image.tmdb.org/t/p/w342\($0)") } }
+    var rating: String? {
+        guard let voteAverage, voteAverage > 0 else { return nil }
+        return String(format: "%.1f", voteAverage)
+    }
     var backdropURL: URL? { backdropPath.flatMap { URL(string: "https://image.tmdb.org/t/p/w1280\($0)") } }
 }
 
@@ -66,6 +71,12 @@ struct TMDBClient {
     func trending(_ type: MediaType) async throws -> [TMDBItem] {
         let page: TMDBPage<TMDBItem> = try await get("trending/\(type.rawValue)/week")
         return page.results.map { var item = $0; item.mediaType = type.rawValue; return item }
+    }
+
+    /// Movies and series together, keeping each item's own media type.
+    func trendingAll() async throws -> [TMDBItem] {
+        let page: TMDBPage<TMDBItem> = try await get("trending/all/week")
+        return page.results.filter { $0.mediaType == "movie" || $0.mediaType == "tv" }
     }
 
     func popular(_ type: MediaType) async throws -> [TMDBItem] {
