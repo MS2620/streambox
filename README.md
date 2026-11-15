@@ -56,7 +56,24 @@ The [install guide](https://ms2620.github.io/tellio-site/install.html) walks thr
 
 ## Feedback and problems
 
-On the Apple TV, use **Settings › About › Send feedback**, or [open an issue](https://github.com/MS2620/tellio/issues). Say what you did, what happened, and your Tellio build number (in Settings › About).
+There are two ways to report a problem or suggest an idea:
+
+- **From the Apple TV:** Settings › About › Send feedback. It becomes an issue here for you.
+- **Directly on GitHub:** [open an issue](https://github.com/MS2620/tellio/issues/new). You need a GitHub account, and you can add screenshots.
+
+Either way, say what you did, what happened, and your Tellio build number (in Settings › About). Please don't post logins, server addresses or addon links.
+
+## Licence
+
+Tellio is **not open source**. You can download the official builds and use them on your own devices, and you can read the code, but you may not copy, modify, redistribute or reuse it. See [LICENSE](LICENSE).
+
+## Third-party software
+
+Tellio builds include these components, each under its own licence. The exact versions in each build are listed in its release notes.
+
+- [AetherEngine](https://github.com/superuser404notfound/AetherEngine): LGPL-3.0 with an App Store exception. Tellio uses it unmodified.
+- [FFmpegBuild](https://github.com/superuser404notfound/FFmpegBuild) (FFmpeg and related libraries), linked dynamically: LGPL; licence texts are in that repository's `LICENSES` folder.
+- [Sentry Cocoa SDK](https://github.com/getsentry/sentry-cocoa): MIT.
 
 ## Credits
 
