@@ -53,6 +53,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             TRAKT_CLIENT_ID="${{ secrets.TRAKT_CLIENT_ID }}" \
+            TMDB_TOKEN="${{ secrets.TMDB_TOKEN }}" \
             COMPILER_INDEX_STORE_ENABLE=NO \
             DEBUG_INFORMATION_FORMAT=dwarf \
             build
@@ -64,6 +65,7 @@ jobs:
           echo "--- Version ---"
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" -c "Print :CFBundleVersion" "$APP/Info.plist"
           if [ -n "$(/usr/libexec/PlistBuddy -c "Print :TraktClientID" "$APP/Info.plist" 2>/dev/null)" ]; then echo "Trakt: built-in Client ID present"; else echo "Trakt: no built-in Client ID (add the TRAKT_CLIENT_ID secret)"; fi
+          if [ -n "$(/usr/libexec/PlistBuddy -c "Print :TMDBToken" "$APP/Info.plist" 2>/dev/null)" ]; then echo "TMDB: built-in token present"; else echo "TMDB: no built-in token (add the TMDB_TOKEN secret)"; fi
           echo "--- Info.plist icon keys ---"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP/Info.plist" || echo "No CFBundleIcons in Info.plist"
           /usr/libexec/PlistBuddy -c "Print :TVTopShelfImage" "$APP/Info.plist" || echo "No TVTopShelfImage in Info.plist"
@@ -147,6 +149,7 @@ jobs:
             CODE_SIGN_STYLE=Automatic \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             TRAKT_CLIENT_ID="${{ secrets.TRAKT_CLIENT_ID }}" \
+            TMDB_TOKEN="${{ secrets.TMDB_TOKEN }}" \
             archive
 
       - name: Export and upload to TestFlight
