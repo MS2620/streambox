@@ -126,10 +126,13 @@ final class AppSettings: ObservableObject {
         Keychain.setCodable(accounts, for: "xtreamAccounts")
         ReminderStore.activeAccountID = active.isConfigured ? active.id : nil
         addons = Keychain.codable([AddonEntry].self, for: "addons") ?? []
+        let freshInstall = !Preferences.hasSaved
         prefs = Preferences.load()
         // Anyone who already set StreamBox up (before the setup screens existed) skips them.
-        if !prefs.setupDone && (active.isConfigured || !addons.isEmpty || !prefs.myList.isEmpty
-                                || !prefs.favouriteTeams.isEmpty) {
+        // A fresh install always gets setup, even with logins left in the Keychain by an
+        // earlier install; its steps start filled in with them.
+        if !freshInstall && !prefs.setupDone && (active.isConfigured || !addons.isEmpty
+                                                 || !prefs.myList.isEmpty || !prefs.favouriteTeams.isEmpty) {
             prefs.setupDone = true
             prefs.save()
         }
