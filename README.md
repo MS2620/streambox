@@ -60,12 +60,13 @@ There are two ways to report a problem or suggest an idea:
 
 - **From the Apple TV:** Settings › About › Send feedback. It becomes an issue here for you.
 - **Directly on GitHub:** [open an issue](https://github.com/MS2620/tellio/issues/new). You need a GitHub account, and you can add screenshots.
+- **Fix it yourself:** pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Either way, say what you did, what happened, and your Tellio build number (in Settings › About). Please don't post logins, server addresses or addon links.
 
 ## Licence
 
-Tellio is **not open source**. You can download the official builds and use them on your own devices, and you can read the code, but you may not copy, modify, redistribute or reuse it. See [LICENSE](LICENSE).
+Tellio is **not open source**, but contributions are welcome. You can download the official builds and use them on your own devices, read the code, and fork it to fix bugs or add features and send them back as a pull request. You may not publish your own copies or versions of Tellio, or reuse its code elsewhere. See [LICENSE](LICENSE) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Third-party software
 
