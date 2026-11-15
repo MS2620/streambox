@@ -1,0 +1,21 @@
+name: Idea
+description: Suggest a feature or an improvement.
+labels: ["idea"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the idea and what you'd use it for.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would it help?
+      description: What's awkward or missing today. Other apps that do it well are useful to mention.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Mock-ups, screenshots or examples. Please don't include logins, addresses, or provider or addon names.

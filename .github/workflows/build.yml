@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md", "LICENSE"]   # text-only edits don't need a build
+    paths-ignore: ["**.md", "LICENSE", ".github/ISSUE_TEMPLATE/**"]   # text-only edits don't need a build
   pull_request:
   workflow_dispatch:
 

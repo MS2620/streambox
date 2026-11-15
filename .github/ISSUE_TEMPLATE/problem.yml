@@ -1,0 +1,57 @@
+name: Problem
+description: Something isn't working as it should.
+labels: ["problem"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please **don't include logins, server addresses, addon links, or provider or addon names**: issues are public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+      placeholder: "I opened a series, picked a stream, and the player showed a black screen with sound."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can it be repeated?
+      description: The steps, if you know them. Say if it happens every time or only sometimes.
+      placeholder: |
+        1. Go to Live TV
+        2. Open the guide
+        3. …
+  - type: input
+    id: build
+    attributes:
+      label: Tellio build
+      description: In Settings › About › Version, e.g. 0.1.0 (62).
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Apple TV and tvOS version
+      description: e.g. Apple TV 4K (3rd gen), tvOS 26.1. tvOS version is in the Apple TV's Settings › General › About.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where in Tellio?
+      options:
+        - Films & series
+        - Live TV & guide
+        - Sports
+        - Player
+        - Top Shelf
+        - Setup or Settings
+        - Trakt
+        - Backup & restore
+        - Installing or updating
+        - Somewhere else
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots or photos help. Blur any channel names, logins or addresses first.

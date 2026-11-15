@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Install guide
+    url: https://ms2620.github.io/tellio-site/install.html
+    about: Help with installing Tellio with atvloadly.
+  - name: Send feedback from the Apple TV
+    url: https://ms2620.github.io/tellio-site/#faq
+    about: No GitHub account? Use Settings › About › Send feedback in Tellio instead.
