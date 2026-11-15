@@ -30,19 +30,18 @@ Tellio is a native tvOS app that plays what **you** bring: your IPTV provider's 
 
 ## Install
 
-Tellio isn't on the App Store. You install it with [atvloadly](https://github.com/bitxeno/atvloadly), which runs in Docker on a Linux computer, Raspberry Pi or NAS at home and keeps the app signed.
+Tellio isn't on the App Store. There are two ways to install it:
 
-1. Set up atvloadly and pair your Apple TV with it.
-2. Download **Tellio.ipa** from the latest [release](https://github.com/MS2620/tellio/releases).
-3. Install it from atvloadly with a spare Apple ID (a free one works).
-4. Open Tellio and follow the short setup.
+- **[Signulous](https://www.signulous.com)** (paid, about $16 a year for an Apple TV): register your Apple TV with *tvOS Code Signing*, upload **Tellio.ipa** from the latest [release](https://github.com/MS2620/tellio/releases) with every option left unticked, and install. No computer needed at home.
+- **[atvloadly](https://github.com/bitxeno/atvloadly)** (free): runs in Docker on a Linux computer, Raspberry Pi or NAS at home, signs Tellio with a spare Apple ID and keeps it signed.
 
-The [install guide](https://ms2620.github.io/tellio-site/install.html) walks through every step, with troubleshooting. Tellio tells you when a newer build is out.
+The [install guide](https://ms2620.github.io/tellio-site/install.html) walks through both, with troubleshooting. Tellio tells you when a newer build is out; install it over the old one and your settings are kept.
 
 ## Known limitations
 
 - IPTV must use Xtream Codes logins; M3U playlist links aren't supported yet.
 - Only addon results with a direct link play; torrent-only results are hidden.
+- Installing needs Signulous or atvloadly; there's no App Store or TestFlight version yet.
 - Backup & restore needs a backup server you run yourself (see [`server/`](server)).
 - The Top Shelf can stay blank after an install; reinstalling usually fixes it.
 - Tested with a small number of providers and addons so far. Expect rough edges.
