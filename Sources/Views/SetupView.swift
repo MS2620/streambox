@@ -30,7 +30,7 @@ struct SetupView: View {
             }
         }
         // Pages opened from setup (teams, leagues, add addon, restore) borrow their background
-        // from the screen behind them; here that would be the app, so give them StreamBox's own.
+        // from the screen behind them; here that would be the app, so give them Tellio's own.
         .background { AppBackground() }
     }
 
@@ -53,9 +53,9 @@ struct SetupView: View {
                 .frame(width: 150, height: 150)
                 .overlay(Image(systemName: "play.fill").font(.system(size: 64, weight: .bold)))
                 .shadow(color: .black.opacity(0.35), radius: 30, y: 20)
-            Text("Welcome to StreamBox")
+            Text("Welcome to Tellio")
                 .font(.system(size: 72, weight: .heavy))
-            Text("A player for your own Stremio addons and IPTV account. StreamBox doesn't come with any channels or streams of its own.")
+            Text("A player for your own Stremio addons and IPTV account. Tellio doesn't come with any channels or streams of its own.")
                 .font(.system(size: 28, weight: .medium))
                 .foregroundStyle(.white.opacity(0.75))
                 .multilineTextAlignment(.center)
@@ -142,7 +142,7 @@ struct SetupView: View {
     private var teamsStep: some View {
         SetupStepLayout(progress: progress(2), icon: "sportscourt",
                         title: "Follow your teams",
-                        text: "Their games show on Home and in Sports with live scores, and StreamBox finds the channels showing them.",
+                        text: "Their games show on Home and in Sports with live scores, and Tellio finds the channels showing them.",
                         hint: "Not into sports? Skip this.") {
             GlassPanel {
                 ForEach(settings.prefs.favouriteTeams, id: \.id) { team in
