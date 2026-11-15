@@ -50,6 +50,24 @@ struct SettingsView: View {
                     .sheet(isPresented: $showingNotes) {
                         if let latest = updates.latest { UpdateNotes(release: latest) }
                     }
+                    NavigationLink {
+                        FeedbackView()
+                    } label: {
+                        ListRowLabel(title: "Send feedback", subtitle: "Report a problem or suggest an idea",
+                                     icon: "bubble.left", trailing: FeedbackService.isAvailable ? nil : "Not in this build",
+                                     trailingIcon: "chevron.right")
+                    }
+                    .buttonStyle(PlainPressStyle())
+                    SettingsToggleRow("Send crash reports", icon: "ant",
+                                      subtitle: CrashReporting.isAvailable
+                                          ? "Anonymous; no logins, links or watch history"
+                                          : "Not in this build",
+                                      isOn: Binding(
+                                          get: { settings.prefs.crashReports },
+                                          set: { on in
+                                              settings.prefs.crashReports = on
+                                              CrashReporting.apply(enabled: on)
+                                          }))
                     SettingsInfoRow("Top Shelf", icon: "rectangle.topthird.inset.filled", value: Self.topShelfStatus)
                     SettingsInfoRow("Player engine", icon: "cpu", value: "AetherEngine")
                     // A selectable row (not a note) so the remote can scroll down to it.
@@ -60,6 +78,7 @@ struct SettingsView: View {
                     }
                     .buttonStyle(PlainPressStyle())
                 }
+                SettingsNote("Crash reports are on by default. When Tellio crashes, a report is sent the next time it opens.")
             }
         }
     }
@@ -163,11 +182,13 @@ struct SettingsInfoRow: View {
 struct SettingsToggleRow: View {
     let title: String
     let icon: String
+    var subtitle: String? = nil
     @Binding var isOn: Bool
 
-    init(_ title: String, icon: String, isOn: Binding<Bool>) {
+    init(_ title: String, icon: String, subtitle: String? = nil, isOn: Binding<Bool>) {
         self.title = title
         self.icon = icon
+        self.subtitle = subtitle
         self._isOn = isOn
     }
 
@@ -175,7 +196,7 @@ struct SettingsToggleRow: View {
         Button {
             isOn.toggle()
         } label: {
-            ListRowLabel(title: title, icon: icon, trailing: isOn ? "On" : "Off",
+            ListRowLabel(title: title, subtitle: subtitle, icon: icon, trailing: isOn ? "On" : "Off",
                          trailingIcon: isOn ? "checkmark.circle.fill" : "circle")
         }
         .buttonStyle(PlainPressStyle())

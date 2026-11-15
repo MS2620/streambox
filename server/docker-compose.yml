@@ -1,4 +1,4 @@
-# Tellio backup service, reached through the Cloudflare Tunnel.
+# Tellio backup and feedback service, reached through the Cloudflare Tunnel.
 # In the tunnel, point backup.<your domain> at:  http://streambox-backup:8085
 services:
   streambox-backup:
@@ -8,6 +8,10 @@ services:
     environment:
       STREAMBOX_BACKUP_PASSWORD: ${STREAMBOX_BACKUP_PASSWORD:?set it in .env}
       PORT: "8085"
+      # Feedback from the app becomes a GitHub issue. Leave empty to turn feedback off.
+      FEEDBACK_GITHUB_TOKEN: ${FEEDBACK_GITHUB_TOKEN:-}
+      # Password for https://backup.<your domain>/reports (feedback with contact details).
+      FEEDBACK_PAGE_PASSWORD: ${FEEDBACK_PAGE_PASSWORD:-}
     volumes:
       - streambox-backups:/data
     networks:

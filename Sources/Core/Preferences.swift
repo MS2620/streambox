@@ -257,6 +257,9 @@ struct Preferences: Codable, Equatable {
     /// Shown once on a new install; existing setups are marked done on launch.
     var setupDone = false
 
+    /// Anonymous crash reports (Settings › About). On by default.
+    var crashReports = true
+
     /// Live TV data of the IPTV accounts not in use, by account id (the one in use lives in
     /// the fields above).
     var liveAccountStates: [String: LiveAccountState] = [:]
