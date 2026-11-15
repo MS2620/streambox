@@ -52,8 +52,14 @@ struct SettingsView: View {
                     }
                     SettingsInfoRow("Top Shelf", icon: "rectangle.topthird.inset.filled", value: Self.topShelfStatus)
                     SettingsInfoRow("Player engine", icon: "cpu", value: "AetherEngine")
+                    // A selectable row (not a note) so the remote can scroll down to it.
+                    Button {} label: {
+                        ListRowLabel(title: "Film & TV data from TMDB",
+                                     subtitle: "This product uses the TMDB API but is not endorsed or certified by TMDB.",
+                                     icon: "film")
+                    }
+                    .buttonStyle(PlainPressStyle())
                 }
-                SettingsNote("Film and TV information and artwork come from TMDB (themoviedb.org). This product uses the TMDB API but is not endorsed or certified by TMDB.")
             }
         }
     }
