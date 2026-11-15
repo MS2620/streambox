@@ -77,6 +77,13 @@ struct SettingsView: View {
                                      icon: "film")
                     }
                     .buttonStyle(PlainPressStyle())
+                    NavigationLink {
+                        AcknowledgementsView()
+                    } label: {
+                        ListRowLabel(title: "Acknowledgements", subtitle: "Open-source software in Tellio",
+                                     icon: "doc.text", trailingIcon: "chevron.right")
+                    }
+                    .buttonStyle(PlainPressStyle())
                 }
                 SettingsNote("Crash reports are on by default. When Tellio crashes, a report is sent the next time it opens.")
             }

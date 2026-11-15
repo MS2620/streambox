@@ -70,6 +70,18 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      # The exact library versions, shown in Settings › About › Acknowledgements.
+      - name: Read library versions
+        run: |
+          xcodebuild -resolvePackageDependencies -project Tellio.xcodeproj -scheme Tellio -derivedDataPath build > /dev/null
+          python3 - >> "$GITHUB_ENV" <<'PY'
+          import json
+          pins = json.load(open("Tellio.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")).get("pins", [])
+          pairs = [f"{p['identity']}={p.get('state', {}).get('version', '')}" for p in pins]
+          print("LIBRARY_VERSIONS=" + ",".join(pairs))
+          PY
+          grep LIBRARY_VERSIONS "$GITHUB_ENV"
+
       - name: Build for tvOS (unsigned)
         run: |
           xcodebuild -version
@@ -86,6 +98,7 @@ jobs:
             TMDB_TOKEN="${{ secrets.TMDB_TOKEN }}" \
             SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
             FEEDBACK_URL="${{ secrets.FEEDBACK_URL }}" \
+            LIBRARY_VERSIONS="$LIBRARY_VERSIONS" \
             COMPILER_INDEX_STORE_ENABLE=NO \
             DEBUG_INFORMATION_FORMAT=dwarf-with-dsym \
             build

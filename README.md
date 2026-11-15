@@ -74,7 +74,11 @@ Tellio builds include these components, each under its own licence. The exact ve
 
 - [AetherEngine](https://github.com/superuser404notfound/AetherEngine): LGPL-3.0 with an App Store exception. Tellio uses it unmodified.
 - [FFmpegBuild](https://github.com/superuser404notfound/FFmpegBuild) (FFmpeg and related libraries), linked dynamically: LGPL; licence texts are in that repository's `LICENSES` folder.
+- [libdovi](https://github.com/quietvoid/dovi_tool) (Dolby Vision metadata), Copyright (c) quietvoid and contributors: MIT.
+- [Anime4K](https://github.com/bloc97/Anime4K) (line-art upscaling, inside AetherEngine), Copyright (c) 2019-2021 bloc97: MIT.
 - [Sentry Cocoa SDK](https://github.com/getsentry/sentry-cocoa): MIT.
+
+The full licence texts are in the app under Settings › About › Acknowledgements, and in [`Resources/Licenses`](Resources/Licenses).
 
 ## Credits
 
