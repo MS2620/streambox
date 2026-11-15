@@ -24,6 +24,8 @@ jobs:
       contents: write   # to publish the pre-release below
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, so file dates can be restored below
 
       # Reuse downloaded packages (AetherEngine, FFmpeg…) and their compiled
       # output from the last build, so only Tellio's own code recompiles.
@@ -34,6 +36,33 @@ jobs:
           key: derived-${{ runner.os }}-${{ hashFiles('project.yml') }}-${{ github.sha }}
           restore-keys: |
             derived-${{ runner.os }}-${{ hashFiles('project.yml') }}-
+            derived-${{ runner.os }}-
+
+      # Only recompile what changed. A fresh checkout stamps every file with the current
+      # time, so Xcode would think everything changed. Files unchanged since the cached
+      # build get a fixed old date (the same one every run); files changed since then get
+      # the current time, so only those are recompiled.
+      - name: Mark changed files
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, time
+          def git(*args):
+              return subprocess.run(["git", *args], capture_output=True, text=True)
+          files = git("ls-files").stdout.splitlines()
+          built = open("build/.tellio-built-sha").read().strip() if os.path.exists("build/.tellio-built-sha") else ""
+          diff = git("diff", "--name-only", built, "HEAD") if built else None
+          if diff is None or diff.returncode != 0:
+              changed = set(files)   # no usable cache: everything counts as changed
+              print("No earlier build to compare with; building everything")
+          else:
+              changed = set(diff.stdout.splitlines())
+              print(f"Changed since {built[:7]}: {len(changed)} files")
+          old, now = 1577836800, time.time()   # 1 Jan 2020
+          for name in files:
+              if os.path.isfile(name):
+                  stamp = now if name in changed else old
+                  os.utime(name, (stamp, stamp))
+          PY
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -52,6 +81,7 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            SWIFT_COMPILATION_MODE=singlefile \
             TRAKT_CLIENT_ID="${{ secrets.TRAKT_CLIENT_ID }}" \
             TMDB_TOKEN="${{ secrets.TMDB_TOKEN }}" \
             SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
@@ -59,6 +89,8 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             DEBUG_INFORMATION_FORMAT=dwarf-with-dsym \
             build
+          # Remember what this cache was built from, for "Mark changed files" next time.
+          echo "${{ github.sha }}" > build/.tellio-built-sha
       
       # Shows whether the app icon made it into the build. Never fails the build.
       - name: Check app icon in the build
