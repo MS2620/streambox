@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum Keychain {
-    private static let service = "com.mauro.streambox"
+    private static let service = "com.mauro.tellio"
 
     private static func baseQuery(_ key: String) -> [String: Any] {
         [

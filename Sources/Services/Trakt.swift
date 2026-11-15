@@ -481,7 +481,7 @@ final class TraktSync: ObservableObject {
         return item
     }
 
-    // MARK: Changes made in StreamBox
+    // MARK: Changes made in Tellio
 
     /// Marked watched or unwatched by hand.
     func historyChanged(_ contexts: [WatchContext], watched: Bool) {

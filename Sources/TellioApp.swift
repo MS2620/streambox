@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct StreamBoxApp: App {
+struct TellioApp: App {
     @StateObject private var settings = AppSettings()
     @StateObject private var player = PlayerEngineHolder()
 

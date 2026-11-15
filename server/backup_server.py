@@ -1,6 +1,6 @@
-"""StreamBox backup service.
+"""Tellio backup service.
 
-Stores encrypted backup files that StreamBox uploads (Settings › Backup & restore).
+Stores encrypted backup files that Tellio uploads (Settings › Backup & restore).
 The Apple TV encrypts each backup before sending it, so this only ever holds
 unreadable data. Files are deleted 30 days after they were last written.
 
@@ -33,7 +33,7 @@ def prune():
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "StreamBoxBackup/1"
+    server_version = "TellioBackup/1"
 
     def _reply(self, status, body=b"", content_type="text/plain"):
         self.send_response(status)
@@ -92,5 +92,5 @@ if __name__ == "__main__":
     if not PASSWORD:
         raise SystemExit("Set STREAMBOX_BACKUP_PASSWORD")
     os.makedirs(DATA_DIR, exist_ok=True)
-    print(f"StreamBox backup service on port {PORT}")
+    print(f"Tellio backup service on port {PORT}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

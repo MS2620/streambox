@@ -5,7 +5,7 @@ struct TopShelfItem: Codable, Hashable {
     let id: String
     let title: String
     var imageURL: String? = nil
-    /// streambox:// link opened when the card is selected.
+    /// tellio:// link opened when the card is selected.
     let link: String
     /// 0–1 for a movie or episode in progress.
     var progress: Double? = nil
@@ -37,13 +37,13 @@ struct TopShelfSnapshot: Codable {
     }
 }
 
-/// Shared between StreamBox and its Top Shelf extension through an App Group.
+/// Shared between Tellio and its Top Shelf extension through an App Group.
 /// If the group isn't available (some sideloading setups), the extension sees nothing
 /// and the Top Shelf shows the app's banner image as before.
 enum TopShelfStore {
     /// The name the project asks for. Sideloading tools re-sign with their own team and often
     /// rename the group (e.g. adding the team ID), so the real one is read from the bundle.
-    static let requestedGroup = "group.com.mauro.streambox"
+    static let requestedGroup = "group.com.mauro.tellio"
     /// Every candidate the signing granted (this bundle's profile, then the containing app's for the
     /// extension, then AltStore-style Info.plist hints), sorted so the app and the extension agree;
     /// the first one whose container exists wins.
@@ -53,15 +53,15 @@ enum TopShelfStore {
         candidates += (Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String]) ?? []
         candidates.append(requestedGroup)
         let unique = Array(Set(candidates)).sorted { a, b in
-            // Prefer groups named for StreamBox, then alphabetical for a stable choice.
-            let sa = a.lowercased().contains("streambox"), sb = b.lowercased().contains("streambox")
+            // Prefer groups named for Tellio, then alphabetical for a stable choice.
+            let sa = a.lowercased().contains("tellio"), sb = b.lowercased().contains("tellio")
             return sa != sb ? sa : a < b
         }
         return unique.first { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
             ?? unique.first ?? requestedGroup
     }()
 
-    /// For the extension: the StreamBox.app that contains it (…/StreamBox.app/PlugIns/X.appex).
+    /// For the extension: the Tellio.app that contains it (…/Tellio.app/PlugIns/X.appex).
     private static var containingAppURL: URL? {
         let url = Bundle.main.bundleURL
         guard url.pathExtension == "appex" else { return nil }

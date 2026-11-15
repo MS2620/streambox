@@ -22,8 +22,8 @@ workflows:
         script: |
           xcodebuild -version
           xcodebuild \
-            -project StreamBox.xcodeproj \
-            -scheme StreamBox \
+            -project Tellio.xcodeproj \
+            -scheme Tellio \
             -configuration Release \
             -destination 'generic/platform=tvOS' \
             -derivedDataPath build \
@@ -32,11 +32,11 @@ workflows:
 
       - name: Package unsigned IPA
         script: |
-          rm -rf Payload StreamBox-unsigned.ipa
+          rm -rf Payload Tellio-unsigned.ipa
           mkdir -p Payload
-          cp -R build/Build/Products/Release-appletvos/StreamBox.app Payload/
-          zip -qry StreamBox-unsigned.ipa Payload
+          cp -R build/Build/Products/Release-appletvos/Tellio.app Payload/
+          zip -qry Tellio-unsigned.ipa Payload
 
     artifacts:
-      - StreamBox-unsigned.ipa
+      - Tellio-unsigned.ipa
       - build/Logs/**/*.xcactivitylog

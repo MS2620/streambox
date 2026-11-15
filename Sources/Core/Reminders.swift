@@ -24,7 +24,7 @@ struct ProgrammeReminder: Codable, Identifiable, Hashable {
     }
 }
 
-/// Reminders, kept on the Apple TV. While StreamBox is open it watches the clock and
+/// Reminders, kept on the Apple TV. While Tellio is open it watches the clock and
 /// raises `due` when a programme starts; tvOS has no notifications, so a closed app misses them.
 @MainActor
 final class ReminderStore: ObservableObject {

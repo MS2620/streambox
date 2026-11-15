@@ -14,7 +14,7 @@ final class PlayerEngineHolder: ObservableObject {
     init() {
         do {
             let engine = try AetherEngine()
-            // StreamBox plays no audio of its own outside the player.
+            // Tellio plays no audio of its own outside the player.
             engine.deactivatesAudioSessionOnStop = true
             self.engine = engine
             self.initError = nil

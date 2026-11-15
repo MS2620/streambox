@@ -14,7 +14,7 @@ struct StremioStream: Decodable, Hashable {
     let title: String?
     let description: String?
     let url: String?
-    /// Set on torrent-only results. StreamBox can't play those, so they are skipped.
+    /// Set on torrent-only results. Tellio can't play those, so they are skipped.
     let infoHash: String?
 
     /// A direct web link the player can open, if the addon gave one.

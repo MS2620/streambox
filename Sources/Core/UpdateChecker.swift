@@ -1,6 +1,6 @@
 import Foundation
 
-/// Looks at the GitHub pre-releases ("StreamBox build N") and says when a newer build exists.
+/// Looks at the GitHub pre-releases ("Tellio build N") and says when a newer build exists.
 @MainActor
 final class UpdateChecker: ObservableObject {
     static let shared = UpdateChecker()
