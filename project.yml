@@ -16,6 +16,8 @@ settings:
     SENTRY_DSN: ""
     # From the FEEDBACK_URL secret (the backup server's address); empty means no feedback.
     FEEDBACK_URL: ""
+    # Versions of the bundled libraries, for Settings › About › Acknowledgements. Filled by CI.
+    LIBRARY_VERSIONS: ""
 packages:
   AetherEngine:
     url: https://github.com/superuser404notfound/AetherEngine
@@ -47,6 +49,7 @@ targets:
         TMDBToken: $(TMDB_TOKEN)
         SentryDSN: $(SENTRY_DSN)
         FeedbackURL: $(FEEDBACK_URL)
+        LibraryVersions: $(LIBRARY_VERSIONS)
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           # Many IPTV providers only serve plain http
