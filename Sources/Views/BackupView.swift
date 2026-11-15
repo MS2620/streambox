@@ -5,9 +5,6 @@ struct BackupView: View {
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject private var backup = BackupService.shared
 
-    @State private var editingServer = false
-    @State private var editingPassword = false
-    @State private var enteringCode = false
     @State private var pendingCode: String?
     @State private var serverOK: Bool?
     @State private var working = false
@@ -17,20 +14,17 @@ struct BackupView: View {
     var body: some View {
         SettingsPage("Backup & restore") {
             GlassPanel("Your backup server") {
-                Button {
-                    editingServer = true
-                } label: {
-                    ListRowLabel(title: "Server", icon: "server.rack",
-                                 trailing: backup.serverURL.isEmpty ? "Not set" : backup.serverURL)
+                TypingRow(title: "Server", icon: "server.rack",
+                          value: backup.serverURL.isEmpty ? "Not set" : backup.serverURL,
+                          initial: backup.serverURL) {
+                    backup.serverURL = $0
+                    serverOK = nil
                 }
-                .buttonStyle(PlainPressStyle())
-                Button {
-                    editingPassword = true
-                } label: {
-                    ListRowLabel(title: "Password", icon: "lock",
-                                 trailing: backup.password.isEmpty ? "Not set" : "••••••")
+                TypingRow(title: "Password", icon: "lock", value: backup.password.isEmpty ? "Not set" : "••••••",
+                          initial: backup.password, secure: true) {
+                    backup.password = $0
+                    serverOK = nil
                 }
-                .buttonStyle(PlainPressStyle())
                 if backup.isConfigured {
                     Button {
                         Task { serverOK = await backup.checkServer() }
@@ -54,13 +48,9 @@ struct BackupView: View {
                 .buttonStyle(PlainPressStyle())
                 .disabled(!backup.isConfigured || working)
 
-                Button {
-                    enteringCode = true
-                } label: {
-                    ListRowLabel(title: "Restore from a code", icon: "square.and.arrow.down")
-                }
-                .buttonStyle(PlainPressStyle())
-                .disabled(!backup.isConfigured || working)
+                TypingRow(title: "Restore from a code", icon: "square.and.arrow.down", value: "",
+                          initial: "") { pendingCode = $0 }
+                    .disabled(!backup.isConfigured || working)
 
                 if let code = backup.lastCode, let date = backup.lastDate {
                     ListRowLabel(title: "Last backup", icon: "clock",
@@ -73,25 +63,6 @@ struct BackupView: View {
             }
             if let message {
                 SettingsNote(message)
-            }
-        }
-        .sheet(isPresented: $editingServer) {
-            NameSheet(title: "Backup server address", initial: backup.serverURL,
-                      placeholder: "https://backup.example.com", autocapitalize: false) {
-                backup.serverURL = $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                serverOK = nil
-            }
-        }
-        .sheet(isPresented: $editingPassword) {
-            NameSheet(title: "Backup server password", initial: backup.password, placeholder: "Password",
-                      secure: true, autocapitalize: false) {
-                backup.password = $0
-                serverOK = nil
-            }
-        }
-        .sheet(isPresented: $enteringCode) {
-            NameSheet(title: "Backup code", placeholder: "8 characters", autocapitalize: false) {
-                pendingCode = $0
             }
         }
         .confirmationDialog("Restore this backup?", isPresented: Binding(

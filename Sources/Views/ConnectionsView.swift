@@ -366,7 +366,6 @@ struct IPTVAccountView: View {
     @State private var info: XtreamAccountInfo?
     @State private var channelCount: Int?
     @State private var groupCount: Int?
-    @State private var editing: Field?
     @State private var confirmingRemove = false
     @State private var testNote: String?
 
@@ -438,7 +437,7 @@ struct IPTVAccountView: View {
                                 fieldRow(.password, title: "Password", icon: "lock",
                                          value: account.password.isEmpty ? "Not set" : "••••••••")
                             }
-                            SettingsNote("Select a field to change it. The name is only for you; without one the server is shown.")
+                            SettingsNote("Select a field to type in it. The name is only for you; without one the server is shown.")
                                 .padding(.top, 14)
                         }
 
@@ -488,9 +487,6 @@ struct IPTVAccountView: View {
             }
         }
         .task(id: account) { await check(announce: false) }
-        .sheet(item: $editing) { field in
-            sheet(for: field)
-        }
         .confirmationDialog("Remove this IPTV account?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove account", role: .destructive) {
                 let wasInUse = isInUse
@@ -512,37 +508,26 @@ struct IPTVAccountView: View {
     }
 
     private func fieldRow(_ field: Field, title: String, icon: String, value: String) -> some View {
-        Button {
-            editing = field
-        } label: {
-            ListRowLabel(title: title, icon: icon, trailing: value)
+        TypingRow(title: title, icon: icon, value: value, initial: initial(field),
+                  secure: field == .password, autocapitalize: field == .name,
+                  allowsEmpty: field == .name) { value in
+            update {
+                switch field {
+                case .name: $0.name = value
+                case .server: $0.server = value
+                case .username: $0.username = value
+                case .password: $0.password = value
+                }
+            }
         }
-        .buttonStyle(PlainPressStyle())
     }
 
-    @ViewBuilder
-    private func sheet(for field: Field) -> some View {
+    private func initial(_ field: Field) -> String {
         switch field {
-        case .name:
-            NameSheet(title: "Account name", initial: account.name, placeholder: "e.g. My provider",
-                      allowsEmpty: true) { value in
-                update { $0.name = value }
-            }
-        case .server:
-            NameSheet(title: "Server", initial: account.server, placeholder: "http://host:port",
-                      autocapitalize: false) { value in
-                update { $0.server = value }
-            }
-        case .username:
-            NameSheet(title: "Username", initial: account.username, placeholder: "Username",
-                      autocapitalize: false) { value in
-                update { $0.username = value }
-            }
-        case .password:
-            NameSheet(title: "Password", initial: account.password, placeholder: "Password",
-                      secure: true, autocapitalize: false) { value in
-                update { $0.password = value }
-            }
+        case .name: return account.name
+        case .server: return account.server
+        case .username: return account.username
+        case .password: return account.password
         }
     }
 
@@ -571,7 +556,6 @@ struct IPTVAccountView: View {
 struct TMDBAccountView: View {
     @EnvironmentObject var settings: AppSettings
     @State private var state: ConnectionState = .checking("Checking…")
-    @State private var editing = false
     @State private var confirmingRemove = false
 
     private var maskedToken: String {
@@ -588,12 +572,10 @@ struct TMDBAccountView: View {
                     ConnectionHeader(title: "TMDB", icon: "film", state: state)
 
                     GlassPanel("Login") {
-                        Button {
-                            editing = true
-                        } label: {
-                            ListRowLabel(title: "API Read Access Token", icon: "key", trailing: maskedToken)
+                        TypingRow(title: "API Read Access Token", icon: "key", value: maskedToken,
+                                  initial: settings.ownTmdbToken, secure: true) { value in
+                            settings.tmdbToken = value.trimmingCharacters(in: .whitespacesAndNewlines)
                         }
-                        .buttonStyle(PlainPressStyle())
                     }
                     SettingsNote(!AppSettings.builtInTMDBToken.isEmpty
                         ? "StreamBox has a TMDB key built in, so there's nothing to set up. To use your own instead, get the long \"API Read Access Token\" from themoviedb.org → Settings → API."
@@ -631,12 +613,6 @@ struct TMDBAccountView: View {
             }
         }
         .task(id: settings.tmdbToken) { await check() }
-        .sheet(isPresented: $editing) {
-            NameSheet(title: "TMDB API Read Access Token", initial: settings.ownTmdbToken, placeholder: "Token",
-                      secure: true, autocapitalize: false) { value in
-                settings.tmdbToken = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-        }
         .confirmationDialog("Remove the TMDB token?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove token", role: .destructive) { settings.tmdbToken = "" }
             Button("Cancel", role: .cancel) {}
@@ -1013,8 +989,6 @@ struct TraktAccountView: View {
 /// Settings › Connections › Trakt › Use your own Trakt app: swaps the built-in Client ID for yours.
 struct TraktOwnAppView: View {
     @ObservedObject private var trakt = TraktSync.shared
-    @State private var editingID = false
-    @State private var editingSecret = false
 
     var body: some View {
         ZStack {
@@ -1024,23 +998,18 @@ struct TraktOwnAppView: View {
                     Text("Your own Trakt app")
                         .font(.system(size: 44, weight: .heavy))
                     GlassPanel {
-                        Button {
-                            editingID = true
-                        } label: {
-                            ListRowLabel(title: "Client ID", icon: "key",
-                                         trailing: trakt.clientID.isEmpty
-                                            ? (trakt.hasBuiltInApp ? "Built in" : "Not set")
-                                            : "••••" + String(trakt.clientID.suffix(4)))
+                        TypingRow(title: "Client ID", icon: "key",
+                                  value: trakt.clientID.isEmpty
+                                      ? (trakt.hasBuiltInApp ? "Built in" : "Not set")
+                                      : "••••" + String(trakt.clientID.suffix(4)),
+                                  initial: trakt.clientID, allowsEmpty: true) { trakt.clientID = $0 }
+                        if !trakt.clientID.isEmpty {
+                            TypingRow(title: "Client secret (older apps only)", icon: "lock",
+                                      value: trakt.clientSecret.isEmpty ? "None" : "••••••",
+                                      initial: trakt.clientSecret, secure: true, allowsEmpty: true) {
+                                trakt.clientSecret = $0
+                            }
                         }
-                        .buttonStyle(PlainPressStyle())
-                        Button {
-                            editingSecret = true
-                        } label: {
-                            ListRowLabel(title: "Client secret (older apps only)", icon: "lock",
-                                         trailing: trakt.clientSecret.isEmpty ? "None" : "••••••")
-                        }
-                        .buttonStyle(PlainPressStyle())
-                        .disabled(trakt.clientID.isEmpty)
                         if trakt.usingOwnApp && trakt.hasBuiltInApp {
                             Button {
                                 trakt.clientID = ""
@@ -1056,16 +1025,6 @@ struct TraktOwnAppView: View {
                 .frame(maxWidth: 1100)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 60)
-            }
-        }
-        .sheet(isPresented: $editingID) {
-            NameSheet(title: "Trakt Client ID", initial: trakt.clientID, placeholder: "Client ID",
-                      autocapitalize: false) { trakt.clientID = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        }
-        .sheet(isPresented: $editingSecret) {
-            NameSheet(title: "Trakt Client Secret", initial: trakt.clientSecret, placeholder: "Client secret",
-                      secure: true, autocapitalize: false) {
-                trakt.clientSecret = $0.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
     }
