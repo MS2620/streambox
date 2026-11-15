@@ -174,7 +174,7 @@ struct TraktClient {
         switch status {
         case 200:
             if let tokens = try? JSONDecoder.snake.decode(TraktTokens.self, from: data) { return .approved(tokens) }
-            return .failed("Trakt sent an answer StreamBox couldn't read.")
+            return .failed("Trakt sent an answer Tellio couldn't read.")
         case 400: return .pending
         case 429: return .slowDown
         case 401, 403, 404: return .failed("Trakt didn't accept this sign-in. Check the Trakt app's client ID.")

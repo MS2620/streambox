@@ -104,10 +104,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="build-${{ github.run_number }}"
-          TITLE="StreamBox build ${{ github.run_number }}"
+          TITLE="Tellio build ${{ github.run_number }}"
           git log -1 --format='%B' | grep -v -e '^Co-Authored-By:' -e '^Claude-Session:' > notes.md
-          cp StreamBox-unsigned.ipa StreamBox.ipa
-          gh release create "$TAG" StreamBox.ipa \
+          cp StreamBox-unsigned.ipa Tellio.ipa
+          gh release create "$TAG" Tellio.ipa \
             --target "${{ github.sha }}" \
             --title "$TITLE" \
             --notes-file notes.md \

@@ -30,7 +30,7 @@ targets:
     info:
       path: Config/Info.plist
       properties:
-        CFBundleDisplayName: StreamBox
+        CFBundleDisplayName: Tellio
         # Without these the generator writes a fixed "1.0 (1)"
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -62,7 +62,7 @@ targets:
     info:
       path: Config/TopShelf-Info.plist
       properties:
-        CFBundleDisplayName: StreamBox Top Shelf
+        CFBundleDisplayName: Tellio Top Shelf
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:

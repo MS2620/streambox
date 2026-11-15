@@ -578,7 +578,7 @@ struct TMDBAccountView: View {
                         }
                     }
                     SettingsNote(!AppSettings.builtInTMDBToken.isEmpty
-                        ? "StreamBox has a TMDB key built in, so there's nothing to set up. To use your own instead, get the long \"API Read Access Token\" from themoviedb.org → Settings → API."
+                        ? "Tellio has a TMDB key built in, so there's nothing to set up. To use your own instead, get the long \"API Read Access Token\" from themoviedb.org → Settings → API."
                         : "Free from themoviedb.org → Settings → API. Use the long \"API Read Access Token\", not the short API key.")
 
                     GlassPanel("Catalogue") {
@@ -619,7 +619,7 @@ struct TMDBAccountView: View {
         } message: {
             Text(AppSettings.builtInTMDBToken.isEmpty
                  ? "Home, Movies, Series, Calendar and Search need it to show anything."
-                 : "StreamBox goes back to its built-in key.")
+                 : "Tellio goes back to its built-in key.")
         }
     }
 
@@ -846,7 +846,7 @@ struct TraktAccountView: View {
                         } else {
                             SettingsNote(trakt.hasApp
                                 ? "Sign in with your Trakt account. No Trakt app or keys to set up."
-                                : "This copy of StreamBox has no Trakt app built in. Add your own below to sign in.")
+                                : "This copy of Tellio has no Trakt app built in. Add your own below to sign in.")
                         }
                     }
 
@@ -935,7 +935,7 @@ struct TraktAccountView: View {
                 SettingsToggleRow("Watchlist ↔ My List", icon: "plus.circle", isOn: $settings.prefs.traktWatchlist)
                 SettingsToggleRow("Scrobble while watching", icon: "dot.radiowaves.left.and.right", isOn: $settings.prefs.traktScrobble)
             }
-            SettingsNote("Syncs when StreamBox opens and every 10 minutes. Scrobbling shows \u{201C}Watching now\u{201D} on your Trakt profile and marks things watched at 80%.")
+            SettingsNote("Syncs when Tellio opens and every 10 minutes. Scrobbling shows \u{201C}Watching now\u{201D} on your Trakt profile and marks things watched at 80%.")
         }
     }
 

@@ -35,7 +35,7 @@ struct BackupView: View {
                     .buttonStyle(PlainPressStyle())
                 }
             }
-            SettingsNote("The StreamBox backup service on your VPS (e.g. https://backup.mauroks.co.uk) and the password you set in its .env file.")
+            SettingsNote("The Tellio backup service on your VPS (e.g. https://backup.mauroks.co.uk) and the password you set in its .env file.")
 
             GlassPanel("Backup & restore") {
                 Button {

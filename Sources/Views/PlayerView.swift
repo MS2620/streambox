@@ -739,14 +739,14 @@ private struct AetherPlaybackView: View {
     }
 
     /// Tells the Apple TV what's playing, so Home Assistant, the Control Centre and the
-    /// iPhone remote see StreamBox as playing video (with title, pause and play).
+    /// iPhone remote see Tellio as playing video (with title, pause and play).
     private func publishNowPlaying() {
         engine.ownsVideoNowPlayingSession = true
         engine.ownsVideoNowPlayingCommands = true
         engine.ownsSoftwareNowPlaying = true
         engine.ownsAudioNowPlaying = true
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: current.title ?? "StreamBox",
+            MPMediaItemPropertyTitle: current.title ?? "Tellio",
             MPNowPlayingInfoPropertyMediaType: NSNumber(value: MPNowPlayingInfoMediaType.video.rawValue),
             MPNowPlayingInfoPropertyIsLiveStream: NSNumber(value: current.isLive),
         ]
