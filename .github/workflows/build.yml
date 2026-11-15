@@ -54,8 +54,10 @@ jobs:
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             TRAKT_CLIENT_ID="${{ secrets.TRAKT_CLIENT_ID }}" \
             TMDB_TOKEN="${{ secrets.TMDB_TOKEN }}" \
+            SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
+            FEEDBACK_URL="${{ secrets.FEEDBACK_URL }}" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            DEBUG_INFORMATION_FORMAT=dwarf \
+            DEBUG_INFORMATION_FORMAT=dwarf-with-dsym \
             build
       
       # Shows whether the app icon made it into the build. Never fails the build.
@@ -66,6 +68,8 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" -c "Print :CFBundleVersion" "$APP/Info.plist"
           if [ -n "$(/usr/libexec/PlistBuddy -c "Print :TraktClientID" "$APP/Info.plist" 2>/dev/null)" ]; then echo "Trakt: built-in Client ID present"; else echo "Trakt: no built-in Client ID (add the TRAKT_CLIENT_ID secret)"; fi
           if [ -n "$(/usr/libexec/PlistBuddy -c "Print :TMDBToken" "$APP/Info.plist" 2>/dev/null)" ]; then echo "TMDB: built-in token present"; else echo "TMDB: no built-in token (add the TMDB_TOKEN secret)"; fi
+          if [ -n "$(/usr/libexec/PlistBuddy -c "Print :SentryDSN" "$APP/Info.plist" 2>/dev/null)" ]; then echo "Crash reports: on"; else echo "Crash reports: off (add the SENTRY_DSN secret)"; fi
+          if [ -n "$(/usr/libexec/PlistBuddy -c "Print :FeedbackURL" "$APP/Info.plist" 2>/dev/null)" ]; then echo "Feedback: on"; else echo "Feedback: off (add the FEEDBACK_URL secret)"; fi
           echo "--- Info.plist icon keys ---"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$APP/Info.plist" || echo "No CFBundleIcons in Info.plist"
           /usr/libexec/PlistBuddy -c "Print :TVTopShelfImage" "$APP/Info.plist" || echo "No TVTopShelfImage in Info.plist"
@@ -73,6 +77,21 @@ jobs:
           ls "$APP" | head -50
           echo "--- Icon assets in Assets.car ---"
           xcrun --sdk appletvos assetutil --info "$APP/Assets.car" | grep -E '"(Name|AssetType|Idiom)"' | sort | uniq -c | head -60 || echo "No Assets.car"
+
+      # Symbol files, so crash reports show function names and lines. Skipped until the
+      # SENTRY_AUTH_TOKEN secret and SENTRY_ORG variable are set. Never fails the build.
+      - name: Upload debug symbols to Sentry
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'tellio' }}
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ] || [ -z "$SENTRY_ORG" ]; then
+            echo "Skipped: add the SENTRY_AUTH_TOKEN secret and SENTRY_ORG variable"; exit 0
+          fi
+          npx --yes @sentry/cli@2 debug-files upload --include-sources build/Build/Products/Release-appletvos
 
       # Unsigned IPA for sideloading (Sideloadly / atvloadly re-sign it with your Apple ID)
       # Pseudo-sign (ldid) the app and its Top Shelf extension with their entitlements.
@@ -150,6 +169,8 @@ jobs:
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             TRAKT_CLIENT_ID="${{ secrets.TRAKT_CLIENT_ID }}" \
             TMDB_TOKEN="${{ secrets.TMDB_TOKEN }}" \
+            SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
+            FEEDBACK_URL="${{ secrets.FEEDBACK_URL }}" \
             archive
 
       - name: Export and upload to TestFlight

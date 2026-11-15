@@ -5,6 +5,11 @@ struct TellioApp: App {
     @StateObject private var settings = AppSettings()
     @StateObject private var player = PlayerEngineHolder()
 
+    init() {
+        // As early as possible, so a crash during launch is still caught.
+        CrashReporting.apply(enabled: Preferences.load().crashReports)
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

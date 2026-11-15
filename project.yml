@@ -12,10 +12,17 @@ settings:
     TRAKT_CLIENT_ID: ""
     # Filled by GitHub Actions from the TMDB_TOKEN secret; empty means "enter your own".
     TMDB_TOKEN: ""
+    # From the SENTRY_DSN secret; empty means no crash reports in that build.
+    SENTRY_DSN: ""
+    # From the FEEDBACK_URL secret (the backup server's address); empty means no feedback.
+    FEEDBACK_URL: ""
 packages:
   AetherEngine:
     url: https://github.com/superuser404notfound/AetherEngine
     from: 7.66.1
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    from: 9.0.0
 targets:
   Tellio:
     type: application
@@ -24,6 +31,8 @@ targets:
     dependencies:
       - package: AetherEngine
         product: AetherEngine
+      - package: Sentry
+        product: Sentry
       # Top Shelf: Continue Watching and live games on the Apple TV home screen
       - target: TellioTopShelf
     scheme: {}
@@ -36,6 +45,8 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         TraktClientID: $(TRAKT_CLIENT_ID)
         TMDBToken: $(TMDB_TOKEN)
+        SentryDSN: $(SENTRY_DSN)
+        FeedbackURL: $(FEEDBACK_URL)
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           # Many IPTV providers only serve plain http
