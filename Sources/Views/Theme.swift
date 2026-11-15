@@ -208,7 +208,10 @@ struct ListRowLabel: View {
     var dimmed = false
     /// Red text, for rows that delete something.
     var destructive = false
-    @Environment(\.isFocused) private var isFocused
+    /// Draws the focused look even when focus sits on something on top (a typing row's field).
+    var highlighted = false
+    @Environment(\.isFocused) private var environmentFocused
+    private var isFocused: Bool { environmentFocused || highlighted }
 
     private var restingColor: Color {
         if destructive { return Theme.danger }
@@ -277,6 +280,54 @@ struct ThinProgress: View {
             }
         }
         .frame(height: 8)
+    }
+}
+
+/// A row you type into: selecting it opens the tvOS keyboard straight away (no pop-up first),
+/// with the row's title at the top of the keyboard screen. Saved when you press Done.
+struct TypingRow: View {
+    let title: String
+    var subtitle: String? = nil
+    let icon: String
+    /// What the row shows on the right (e.g. "Not set", a masked password).
+    let value: String
+    let initial: String
+    var secure = false
+    var autocapitalize = false
+    var allowsEmpty = false
+    let onSave: (String) -> Void
+
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var cleaned: String { secure ? text : text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        ListRowLabel(title: title, subtitle: subtitle, icon: icon, trailing: value, highlighted: focused)
+            // The real field sits on top, almost invisible and exactly the row's size: selecting
+            // the row selects it, which opens the keyboard. Its prompt is the keyboard's title.
+            .overlay {
+            Group {
+                if secure {
+                    SecureField(title, text: $text)
+                } else {
+                    TextField(title, text: $text)
+                        .textInputAutocapitalization(autocapitalize ? .words : .never)
+                }
+            }
+            .autocorrectionDisabled(!autocapitalize)
+            .focused($focused)
+            .opacity(0.02)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        .onAppear { text = initial }
+        .onChange(of: initial) { _, value in
+            if !focused { text = value }
+        }
+        .onSubmit {
+            guard allowsEmpty || !cleaned.isEmpty else { text = initial; return }
+            if cleaned != initial { onSave(cleaned) }
+        }
     }
 }
 

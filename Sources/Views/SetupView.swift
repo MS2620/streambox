@@ -224,13 +224,7 @@ private struct SetupLiveStep<Progress: View>: View {
     let next: () -> Void
     let progress: (Int) -> Progress
 
-    private enum Field: String, Identifiable {
-        case name, server, username, password
-        var id: String { rawValue }
-    }
-
     @State private var account = XtreamAccount()
-    @State private var editing: Field?
     @State private var status: ConnectionState?
 
     var body: some View {
@@ -239,11 +233,16 @@ private struct SetupLiveStep<Progress: View>: View {
                         text: "For Live TV, the guide and finding matches on your channels. Use the Xtream Codes details from your provider.",
                         hint: "No IPTV? Skip this. Films and series still work, and you can add it later in Settings › Connections.") {
             GlassPanel {
-                row(.name, "Name", "textformat", account.name.isEmpty ? "e.g. Home IPTV" : account.name,
-                    subtitle: "So you can tell your IPTV accounts apart")
-                row(.server, "Server", "globe", account.server.isEmpty ? "Not set" : account.host)
-                row(.username, "Username", "person", account.username.isEmpty ? "Not set" : account.username)
-                row(.password, "Password", "lock", account.password.isEmpty ? "Not set" : "••••••••")
+                TypingRow(title: "Name", subtitle: "So you can tell your IPTV accounts apart", icon: "textformat",
+                          value: account.name.isEmpty ? "e.g. Home IPTV" : account.name,
+                          initial: account.name, autocapitalize: true, allowsEmpty: true) { account.name = $0 }
+                TypingRow(title: "Server", icon: "globe", value: account.server.isEmpty ? "Not set" : account.host,
+                          initial: account.server) { account.server = $0 }
+                TypingRow(title: "Username", icon: "person",
+                          value: account.username.isEmpty ? "Not set" : account.username,
+                          initial: account.username) { account.username = $0 }
+                TypingRow(title: "Password", icon: "lock", value: account.password.isEmpty ? "Not set" : "••••••••",
+                          initial: account.password, secure: true) { account.password = $0 }
             }
             if let status {
                 HStack(spacing: 12) {
@@ -283,32 +282,6 @@ private struct SetupLiveStep<Progress: View>: View {
                 status = state
             }
         }
-        .sheet(item: $editing) { field in
-            switch field {
-            case .name:
-                NameSheet(title: "Account name", initial: account.name, placeholder: "e.g. Home IPTV",
-                          allowsEmpty: true) { account.name = $0 }
-            case .server:
-                NameSheet(title: "Server", initial: account.server, placeholder: "http://host:port",
-                          autocapitalize: false) { account.server = $0 }
-            case .username:
-                NameSheet(title: "Username", initial: account.username, placeholder: "Username",
-                          autocapitalize: false) { account.username = $0 }
-            case .password:
-                NameSheet(title: "Password", initial: account.password, placeholder: "Password",
-                          secure: true, autocapitalize: false) { account.password = $0 }
-            }
-        }
-    }
-
-    private func row(_ field: Field, _ title: String, _ icon: String, _ value: String,
-                     subtitle: String? = nil) -> some View {
-        Button {
-            editing = field
-        } label: {
-            ListRowLabel(title: title, subtitle: subtitle, icon: icon, trailing: value)
-        }
-        .buttonStyle(PlainPressStyle())
     }
 }
 
