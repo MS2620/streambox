@@ -14,6 +14,8 @@ struct BackupPayload: Codable {
     var reminders: [ProgrammeReminder]
     var trakt: TraktSync.Backup?
     var parentalPIN: String?
+    /// Every IPTV account (backups from before multiple accounts only have `xtream`).
+    var xtreamAccounts: [XtreamAccount]? = nil
 }
 
 enum BackupError: LocalizedError {
@@ -84,9 +86,10 @@ final class BackupService: ObservableObject {
             addons: settings.addons,
             preferences: try JSONEncoder().encode(settings.prefs),
             watchHistory: WatchHistory.shared.snapshot,
-            reminders: ReminderStore.shared.reminders,
+            reminders: ReminderStore.shared.allReminders,
             trakt: TraktSync.shared.hasApp ? TraktSync.shared.backup : nil,
-            parentalPIN: ParentalLock.shared.storedPIN
+            parentalPIN: ParentalLock.shared.storedPIN,
+            xtreamAccounts: settings.xtreamAccounts
         )
         let code = String((0..<8).map { _ in Self.alphabet.randomElement()! })
         let sealed = try AES.GCM.seal(try JSONEncoder().encode(payload), using: key(code: code))
@@ -124,9 +127,15 @@ final class BackupService: ObservableObject {
         }
 
         settings.tmdbToken = payload.tmdbToken
+        settings.xtreamAccounts = payload.xtreamAccounts
+            ?? (payload.xtream.isConfigured ? [payload.xtream] : [])
         settings.xtream = payload.xtream
+        ReminderStore.activeAccountID = payload.xtream.isConfigured ? payload.xtream.id : nil
         settings.addons = payload.addons
-        if let prefs = Preferences.decode(payload.preferences) { settings.prefs = prefs }
+        if var prefs = Preferences.decode(payload.preferences) {
+            prefs.setupDone = true
+            settings.prefs = prefs
+        }
         WatchHistory.shared.restore(payload.watchHistory)
         ReminderStore.shared.restore(payload.reminders)
         if let trakt = payload.trakt { TraktSync.shared.restore(trakt) }

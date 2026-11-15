@@ -46,6 +46,9 @@ struct LiveTVView: View {
     @State private var pendingGroup: GroupEntry?
     @State private var askingPIN = false
     @State private var channelsReload = 0
+    @State private var choosingAccount = false
+    /// The account the groups were loaded for, so switching account starts on its own groups.
+    @State private var loadedAccountID: String?
 
     private static let favouritesID = "__favourites"
     private static let recentID = "__recent"
@@ -204,6 +207,24 @@ struct LiveTVView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if settings.xtreamAccounts.count > 1 {
+                Button {
+                    choosingAccount = true
+                } label: {
+                    ListRowLabel(title: settings.xtream.displayName, subtitle: "Switch account",
+                                 icon: "arrow.left.arrow.right")
+                }
+                .buttonStyle(PlainPressStyle())
+                .confirmationDialog("Live TV account", isPresented: $choosingAccount, titleVisibility: .visible) {
+                    ForEach(settings.xtreamAccounts) { account in
+                        Button((account.id == settings.xtream.id ? "✓ " : "") + account.displayName) {
+                            settings.switchAccount(to: account.id)
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                }
+            }
+
             HStack(spacing: 10) {
                 ForEach(LiveLayout.allCases) { layout in
                     Button {
@@ -611,6 +632,13 @@ struct LiveTVView: View {
 
     private func loadCategories() async {
         guard settings.xtream.isConfigured else { return }
+        if loadedAccountID != settings.xtream.id {
+            // Another account: its groups and channels are different, so start fresh.
+            loadedAccountID = settings.xtream.id
+            selectedID = nil
+            categories = []
+            channels = []
+        }
         do {
             categories = try await XtreamCache.shared.liveCategories(client)
             error = nil

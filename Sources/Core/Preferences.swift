@@ -125,6 +125,45 @@ enum HomeRow: String, CaseIterable, Identifiable {
     }
 }
 
+/// One IPTV account's Live TV data: channel and group ids only make sense for that account.
+struct LiveAccountState: Codable, Equatable {
+    var favouriteChannelIDs: Set<Int> = []
+    var recentChannelIDs: [Int] = []
+    var lastCategoryID: String?
+    var hiddenChannelIDs: Set<Int> = []
+    var hiddenCategoryIDs: Set<String> = []
+    var lockedCategoryIDs: Set<String> = []
+    var folders: [ChannelFolder] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case favouriteChannelIDs, recentChannelIDs, lastCategoryID, hiddenChannelIDs
+        case hiddenCategoryIDs, lockedCategoryIDs, folders
+    }
+
+    init(favouriteChannelIDs: Set<Int> = [], recentChannelIDs: [Int] = [], lastCategoryID: String? = nil,
+         hiddenChannelIDs: Set<Int> = [], hiddenCategoryIDs: Set<String> = [],
+         lockedCategoryIDs: Set<String> = [], folders: [ChannelFolder] = []) {
+        self.favouriteChannelIDs = favouriteChannelIDs
+        self.recentChannelIDs = recentChannelIDs
+        self.lastCategoryID = lastCategoryID
+        self.hiddenChannelIDs = hiddenChannelIDs
+        self.hiddenCategoryIDs = hiddenCategoryIDs
+        self.lockedCategoryIDs = lockedCategoryIDs
+        self.folders = folders
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        favouriteChannelIDs = (try? c.decodeIfPresent(Set<Int>.self, forKey: .favouriteChannelIDs)) ?? []
+        recentChannelIDs = (try? c.decodeIfPresent([Int].self, forKey: .recentChannelIDs)) ?? []
+        lastCategoryID = try? c.decodeIfPresent(String.self, forKey: .lastCategoryID)
+        hiddenChannelIDs = (try? c.decodeIfPresent(Set<Int>.self, forKey: .hiddenChannelIDs)) ?? []
+        hiddenCategoryIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .hiddenCategoryIDs)) ?? []
+        lockedCategoryIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .lockedCategoryIDs)) ?? []
+        folders = (try? c.decodeIfPresent([ChannelFolder].self, forKey: .folders)) ?? []
+    }
+}
+
 // MARK: - Preferences
 
 /// Non-secret app preferences, stored in UserDefaults.
@@ -214,6 +253,30 @@ struct Preferences: Codable, Equatable {
     /// The provider's own movie and series libraries (VOD). Off by default.
     var showProviderMovies = false
     var showProviderSeries = false
+
+    /// Shown once on a new install; existing setups are marked done on launch.
+    var setupDone = false
+
+    /// Live TV data of the IPTV accounts not in use, by account id (the one in use lives in
+    /// the fields above).
+    var liveAccountStates: [String: LiveAccountState] = [:]
+
+    var liveState: LiveAccountState {
+        LiveAccountState(favouriteChannelIDs: favouriteChannelIDs, recentChannelIDs: recentChannelIDs,
+                         lastCategoryID: lastCategoryID, hiddenChannelIDs: hiddenChannelIDs,
+                         hiddenCategoryIDs: hiddenCategoryIDs, lockedCategoryIDs: lockedCategoryIDs,
+                         folders: folders)
+    }
+
+    mutating func restoreLiveState(_ state: LiveAccountState) {
+        favouriteChannelIDs = state.favouriteChannelIDs
+        recentChannelIDs = state.recentChannelIDs
+        lastCategoryID = state.lastCategoryID
+        hiddenChannelIDs = state.hiddenChannelIDs
+        hiddenCategoryIDs = state.hiddenCategoryIDs
+        lockedCategoryIDs = state.lockedCategoryIDs
+        folders = state.folders
+    }
 
     private static let key = "preferences.v1"
 
