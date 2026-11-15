@@ -68,6 +68,14 @@ struct RootView: View {
                         MultiviewView()
                     }
             }
+            .background {
+                // First-run setup, once. Closes itself when setupDone is set.
+                Color.clear
+                    .fullScreenCover(isPresented: Binding(get: { !settings.prefs.setupDone },
+                                                          set: { if !$0 { settings.prefs.setupDone = true } })) {
+                        SetupView()
+                    }
+            }
             .onOpenURL { url in
                 deepLink = DeepLink(url: url)
             }

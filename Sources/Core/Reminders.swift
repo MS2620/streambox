@@ -9,6 +9,8 @@ struct ProgrammeReminder: Codable, Identifiable, Hashable {
     let title: String
     let start: Date
     let end: Date
+    /// The IPTV account the channel belongs to; nil for reminders made before multiple accounts.
+    var accountID: String? = nil
 
     var id: String { "\(channelID)|\(Int(start.timeIntervalSince1970))" }
 
@@ -28,7 +30,17 @@ struct ProgrammeReminder: Codable, Identifiable, Hashable {
 final class ReminderStore: ObservableObject {
     static let shared = ReminderStore()
 
-    @Published private(set) var reminders: [ProgrammeReminder] = []
+    /// Every reminder, for all IPTV accounts.
+    @Published private(set) var allReminders: [ProgrammeReminder] = []
+    /// The IPTV account Live TV uses now; only its reminders are shown and fire.
+    nonisolated(unsafe) static var activeAccountID: String?
+
+    private static func belongsToActive(_ reminder: ProgrammeReminder) -> Bool {
+        reminder.accountID == nil || reminder.accountID == activeAccountID
+    }
+
+    /// The reminders of the account in use.
+    var reminders: [ProgrammeReminder] { allReminders.filter(Self.belongsToActive) }
     /// The reminder to show now, if any.
     @Published private(set) var due: ProgrammeReminder?
 
@@ -39,7 +51,7 @@ final class ReminderStore: ObservableObject {
     private init() {
         if let data = UserDefaults.standard.data(forKey: Self.storageKey),
            let saved = try? JSONDecoder().decode([ProgrammeReminder].self, from: data) {
-            reminders = saved.filter { $0.end > Date() }.sorted { $0.start < $1.start }
+            allReminders = saved.filter { $0.end > Date() }.sorted { $0.start < $1.start }
         }
     }
 
@@ -49,19 +61,21 @@ final class ReminderStore: ObservableObject {
 
     func add(_ reminder: ProgrammeReminder) {
         guard !reminders.contains(where: { $0.id == reminder.id }) else { return }
-        reminders.append(reminder)
-        reminders.sort { $0.start < $1.start }
+        var reminder = reminder
+        if reminder.accountID == nil { reminder.accountID = Self.activeAccountID }
+        allReminders.append(reminder)
+        allReminders.sort { $0.start < $1.start }
         save()
     }
 
     func remove(_ reminder: ProgrammeReminder) {
-        reminders.removeAll { $0.id == reminder.id }
+        allReminders.removeAll { $0.id == reminder.id && $0.accountID == reminder.accountID }
         save()
     }
 
     /// Replaces the reminders with a backup's (past ones are dropped).
     func restore(_ saved: [ProgrammeReminder]) {
-        reminders = saved.filter { $0.end > Date() }.sorted { $0.start < $1.start }
+        allReminders = saved.filter { $0.end > Date() }.sorted { $0.start < $1.start }
         save()
     }
 
@@ -80,18 +94,21 @@ final class ReminderStore: ObservableObject {
     private func check() {
         let now = Date()
         // Programmes that have ended are dropped, reminded or not.
-        let before = reminders.count
-        reminders.removeAll { $0.end <= now }
+        let before = allReminders.count
+        allReminders.removeAll { $0.end <= now }
         // One at a time: the next waits until the shown one is dismissed or acted on.
-        if due == nil, let next = reminders.first(where: { $0.start <= now.addingTimeInterval(Self.lead) }) {
+        // Only the account in use: another account's channel can't be played right now.
+        if due == nil, let next = allReminders.first(where: {
+            Self.belongsToActive($0) && $0.start <= now.addingTimeInterval(Self.lead)
+        }) {
             due = next
-            reminders.removeAll { $0.id == next.id }
+            allReminders.removeAll { $0.id == next.id && $0.accountID == next.accountID }
         }
-        if reminders.count != before || due != nil { save() }
+        if allReminders.count != before || due != nil { save() }
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(reminders) {
+        if let data = try? JSONEncoder().encode(allReminders) {
             UserDefaults.standard.set(data, forKey: Self.storageKey)
         }
     }

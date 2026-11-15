@@ -1,7 +1,9 @@
 import Foundation
 import Combine
 
-struct XtreamAccount: Codable, Hashable {
+struct XtreamAccount: Codable, Hashable, Identifiable {
+    /// Stable id, so an account keeps its favourites etc. even if its server is edited.
+    var id = UUID().uuidString
     var server = ""
     var username = ""
     var password = ""
@@ -30,13 +32,15 @@ struct XtreamAccount: Codable, Hashable {
 
 extension XtreamAccount {
     private enum CodingKeys: String, CodingKey {
-        case server, username, password, name
+        case id, server, username, password, name
     }
 
     /// Accounts saved by older versions have no name; every field is optional.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init()
+        // Accounts from before multiple accounts have no id; they get one and keep it once saved.
+        if let saved = try? c.decodeIfPresent(String.self, forKey: .id), !saved.isEmpty { id = saved }
         server = (try? c.decodeIfPresent(String.self, forKey: .server)) ?? ""
         username = (try? c.decodeIfPresent(String.self, forKey: .username)) ?? ""
         password = (try? c.decodeIfPresent(String.self, forKey: .password)) ?? ""
@@ -70,7 +74,22 @@ final class AppSettings: ObservableObject {
         set { ownTmdbToken = newValue }
     }
     var usingBuiltInTMDB: Bool { ownTmdbToken.isEmpty && !Self.builtInTMDBToken.isEmpty }
-    @Published var xtream: XtreamAccount { didSet { Keychain.setCodable(xtream, for: "xtream") } }
+    /// The IPTV account Live TV uses now. Editing it also updates its entry in `xtreamAccounts`.
+    @Published var xtream: XtreamAccount {
+        didSet {
+            Keychain.setCodable(xtream, for: "xtream")
+            guard xtream.isConfigured else { return }
+            if let index = xtreamAccounts.firstIndex(where: { $0.id == xtream.id }) {
+                if xtreamAccounts[index] != xtream { xtreamAccounts[index] = xtream }
+            } else {
+                xtreamAccounts.append(xtream)
+            }
+        }
+    }
+    /// Every IPTV account, the one in use included. Live TV uses one at a time.
+    @Published var xtreamAccounts: [XtreamAccount] {
+        didSet { Keychain.setCodable(xtreamAccounts, for: "xtreamAccounts") }
+    }
     @Published var addons: [AddonEntry] { didSet { Keychain.setCodable(addons, for: "addons") } }
     @Published var prefs: Preferences {
         didSet {
@@ -97,13 +116,87 @@ final class AppSettings: ObservableObject {
         ownTmdbToken = Keychain.string(for: "tmdbToken") ?? ""
         // Older versions stored a Real-Debrid key; StreamBox no longer uses one.
         Keychain.setData(nil, for: "realDebridKey")
-        xtream = Keychain.codable(XtreamAccount.self, for: "xtream") ?? XtreamAccount()
+        let active = Keychain.codable(XtreamAccount.self, for: "xtream") ?? XtreamAccount()
+        var accounts = Keychain.codable([XtreamAccount].self, for: "xtreamAccounts") ?? []
+        if accounts.isEmpty, active.isConfigured { accounts = [active] }
+        xtream = active
+        xtreamAccounts = accounts
+        // Save once so an account from an older version keeps the id it was just given.
+        Keychain.setCodable(active, for: "xtream")
+        Keychain.setCodable(accounts, for: "xtreamAccounts")
+        ReminderStore.activeAccountID = active.isConfigured ? active.id : nil
         addons = Keychain.codable([AddonEntry].self, for: "addons") ?? []
         prefs = Preferences.load()
+        // Anyone who already set StreamBox up (before the setup screens existed) skips them.
+        if !prefs.setupDone && (active.isConfigured || !addons.isEmpty || !prefs.myList.isEmpty
+                                || !prefs.favouriteTeams.isEmpty) {
+            prefs.setupDone = true
+            prefs.save()
+        }
         let hours = prefs.epgRefreshHours
         Task {
             await XtreamCache.shared.configure(refreshHours: hours)
             await SportsGuide.shared.configure(refreshHours: hours)
+        }
+    }
+
+    // MARK: IPTV accounts
+
+    /// Adds an account. The first one, or `use: true`, becomes the one Live TV uses.
+    func addAccount(_ account: XtreamAccount, use: Bool = false) {
+        if let index = xtreamAccounts.firstIndex(where: { $0.id == account.id }) {
+            xtreamAccounts[index] = account
+        } else {
+            xtreamAccounts.append(account)
+        }
+        if use || !xtream.isConfigured || xtream.id == account.id {
+            switchAccount(to: account.id)
+        }
+    }
+
+    /// Saves changes to an account that may or may not be the one in use.
+    func updateAccount(_ account: XtreamAccount) {
+        if xtream.id == account.id {
+            xtream = account
+        } else if let index = xtreamAccounts.firstIndex(where: { $0.id == account.id }) {
+            xtreamAccounts[index] = account
+        }
+    }
+
+    func removeAccount(id: String) {
+        xtreamAccounts.removeAll { $0.id == id }
+        prefs.liveAccountStates[id] = nil
+        guard xtream.id == id else { return }
+        if let next = xtreamAccounts.first {
+            switchAccount(to: next.id, saveCurrent: false)
+        } else {
+            // Last account gone: Live TV data stays, as it always has, for the next login.
+            xtream = XtreamAccount()
+            ReminderStore.activeAccountID = nil
+        }
+    }
+
+    /// Makes Live TV use another account. Its favourites, recent channels, hidden and locked
+    /// groups, folders and reminders come back with it; the current account's are kept for later.
+    func switchAccount(to id: String, saveCurrent: Bool = true) {
+        guard let account = xtreamAccounts.first(where: { $0.id == id }) else { return }
+        guard account.id != xtream.id || !xtream.isConfigured else { xtream = account; return }
+        var updated = prefs
+        if xtream.isConfigured {
+            if saveCurrent { updated.liveAccountStates[xtream.id] = updated.liveState }
+            updated.restoreLiveState(updated.liveAccountStates[account.id] ?? LiveAccountState())
+        } else if let saved = updated.liveAccountStates[account.id] {
+            // No account in use (e.g. after removing the last one): keep what's there unless
+            // this account has its own saved data.
+            updated.restoreLiveState(saved)
+        }
+        updated.liveAccountStates[account.id] = nil
+        prefs = updated
+        xtream = account
+        ReminderStore.activeAccountID = account.id
+        Task {
+            await XtreamCache.shared.clearGuide()
+            await SportsGuide.shared.clear()
         }
     }
 
@@ -124,6 +217,7 @@ final class AppSettings: ObservableObject {
     /// Signs out of TMDB and IPTV and removes every addon. Preferences stay.
     func deleteAllConnections() {
         tmdbToken = ""
+        xtreamAccounts = []
         xtream = XtreamAccount()
         addons = []
         Task {

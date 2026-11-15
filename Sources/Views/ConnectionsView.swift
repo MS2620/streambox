@@ -32,6 +32,8 @@ struct ConnectionRowLabel: View {
     var state: ConnectionState? = nil
     var trailing: String? = nil
     var showsChevron = true
+    /// A small tag after the title, e.g. "IN USE".
+    var badge: String? = nil
     @Environment(\.isFocused) private var isFocused
 
     var body: some View {
@@ -45,9 +47,20 @@ struct ConnectionRowLabel: View {
                         .fill(isFocused ? Theme.ink : Theme.glassStrong)
                 )
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 28, weight: .semibold))
-                    .lineLimit(1)
+                HStack(spacing: 14) {
+                    Text(title)
+                        .font(.system(size: 28, weight: .semibold))
+                        .lineLimit(1)
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 17, weight: .heavy))
+                            .tracking(1)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(isFocused ? Theme.ink : Color.white))
+                            .foregroundStyle(isFocused ? Color.white : Theme.ink)
+                    }
+                }
                 if let state {
                     HStack(spacing: 10) {
                         Circle()
@@ -142,11 +155,15 @@ private struct ConnectionHeader: View {
 /// Status checks shared by the overview and the account pages.
 enum ConnectionCheck {
     static func iptv(_ settings: AppSettings) async -> (ConnectionState, XtreamAccountInfo?) {
-        guard settings.xtream.isConfigured else {
+        await iptv(settings.xtream, userAgent: settings.prefs.iptvUserAgent)
+    }
+
+    static func iptv(_ account: XtreamAccount, userAgent: String) async -> (ConnectionState, XtreamAccountInfo?) {
+        guard account.isConfigured else {
             return (.off("IPTV · Not set up"), nil)
         }
         do {
-            let info = try await settings.xtreamClient.accountInfo()
+            let info = try await XtreamClient(account: account, userAgent: userAgent).accountInfo()
             guard info.signedIn else { return (.problem("IPTV · Login failed"), info) }
             var parts = ["IPTV", info.isActive ? "Online" : info.status]
             if let connections = info.connectionsText { parts.append(connections) }
@@ -199,7 +216,8 @@ enum ConnectionCheck {
 
 struct ConnectionsView: View {
     @EnvironmentObject var settings: AppSettings
-    @State private var iptv: ConnectionState = .checking("IPTV · Checking…")
+    /// Status of each IPTV account, by id.
+    @State private var iptvStates: [String: ConnectionState] = [:]
     @State private var tmdb: ConnectionState = .checking("Catalogue & artwork · Checking…")
     @State private var addonStates: [String: ConnectionState] = [:]
     @State private var versions: [String: String] = [:]
@@ -212,22 +230,38 @@ struct ConnectionsView: View {
 
     /// Re-checks whenever a login or the addon list changes.
     private var checkKey: String {
-        "\(settings.xtream.hashValue)|\(settings.tmdbToken.count)|\(settings.addons.map(\.id).joined(separator: ","))"
+        "\(settings.xtreamAccounts.hashValue)|\(settings.tmdbToken.count)|\(settings.addons.map(\.id).joined(separator: ","))"
     }
 
     var body: some View {
         SettingsPage("Connections") {
-            GlassPanel("Accounts") {
+            GlassPanel("IPTV accounts") {
+                ForEach(settings.xtreamAccounts) { account in
+                    NavigationLink {
+                        IPTVAccountView(accountID: account.id)
+                    } label: {
+                        ConnectionRowLabel(title: account.displayName,
+                                           icon: "antenna.radiowaves.left.and.right",
+                                           state: iptvStates[account.id] ?? .checking("IPTV · Checking…"),
+                                           trailing: account.host,
+                                           badge: settings.xtreamAccounts.count > 1 && account.id == settings.xtream.id
+                                               ? "IN USE" : nil)
+                    }
+                    .buttonStyle(PlainPressStyle())
+                }
                 NavigationLink {
-                    IPTVAccountView()
+                    IPTVAccountView(accountID: nil)
                 } label: {
-                    ConnectionRowLabel(title: settings.xtream.isConfigured ? settings.xtream.displayName : "IPTV",
-                                       icon: "antenna.radiowaves.left.and.right",
-                                       state: iptv,
-                                       trailing: settings.xtream.isConfigured ? settings.xtream.host : "Set up")
+                    ConnectionRowLabel(title: settings.xtreamAccounts.isEmpty ? "Add IPTV account" : "Add another IPTV account",
+                                       icon: "plus")
                 }
                 .buttonStyle(PlainPressStyle())
+            }
+            if settings.xtreamAccounts.count > 1 {
+                SettingsNote("Live TV uses one account at a time. Open an account and choose Use for Live TV, or switch from the Live TV sidebar.")
+            }
 
+            GlassPanel("Accounts") {
                 NavigationLink {
                     TMDBAccountView()
                 } label: {
@@ -287,7 +321,8 @@ struct ConnectionsView: View {
     }
 
     private func check() async {
-        async let iptvResult = ConnectionCheck.iptv(settings)
+        let accounts = settings.xtreamAccounts
+        let userAgent = settings.prefs.iptvUserAgent
         async let tmdbResult = ConnectionCheck.tmdb(settings)
         let addons = settings.addons
         await withTaskGroup(of: (String, ConnectionState, String?).self) { group in
@@ -302,7 +337,12 @@ struct ConnectionsView: View {
                 if let version { versions[id] = version }
             }
         }
-        iptv = await iptvResult.0
+        await withTaskGroup(of: (String, ConnectionState).self) { group in
+            for account in accounts {
+                group.addTask { (account.id, await ConnectionCheck.iptv(account, userAgent: userAgent).0) }
+            }
+            for await (id, state) in group { iptvStates[id] = state }
+        }
         tmdb = await tmdbResult
     }
 }
@@ -312,6 +352,10 @@ struct ConnectionsView: View {
 struct IPTVAccountView: View {
     @EnvironmentObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
+    /// The account to show; nil adds a new one (saved once server, username and password are in).
+    let accountID: String?
+    @State private var newAccount = XtreamAccount()
+    @State private var createdID: String?
 
     private enum Field: String, Identifiable {
         case name, server, username, password
@@ -326,7 +370,30 @@ struct IPTVAccountView: View {
     @State private var confirmingRemove = false
     @State private var testNote: String?
 
-    private var account: XtreamAccount { settings.xtream }
+    private var currentID: String? { accountID ?? createdID }
+
+    private var account: XtreamAccount {
+        guard let id = currentID else { return newAccount }
+        if settings.xtream.id == id { return settings.xtream }
+        return settings.xtreamAccounts.first { $0.id == id } ?? newAccount
+    }
+
+    private var isInUse: Bool { settings.xtream.isConfigured && settings.xtream.id == account.id }
+
+    /// Applies an edit to this account, wherever it lives.
+    private func update(_ change: (inout XtreamAccount) -> Void) {
+        var edited = account
+        change(&edited)
+        if currentID != nil {
+            settings.updateAccount(edited)
+        } else {
+            newAccount = edited
+            if edited.isConfigured {
+                settings.addAccount(edited)
+                createdID = edited.id
+            }
+        }
+    }
 
     private var refreshText: String {
         switch settings.prefs.epgRefreshHours {
@@ -346,6 +413,18 @@ struct IPTVAccountView: View {
                     ConnectionHeader(title: account.isConfigured ? account.displayName : "IPTV",
                                      icon: "antenna.radiowaves.left.and.right",
                                      state: state)
+
+                    if account.isConfigured && !isInUse {
+                        GlassPanel {
+                            Button {
+                                settings.switchAccount(to: account.id)
+                            } label: {
+                                ListRowLabel(title: "Use for Live TV", icon: "checkmark")
+                            }
+                            .buttonStyle(PlainPressStyle())
+                        }
+                        .frame(maxWidth: 760)
+                    }
 
                     HStack(alignment: .top, spacing: 40) {
                         VStack(spacing: 18) {
@@ -408,22 +487,27 @@ struct IPTVAccountView: View {
                 .padding(.vertical, 60)
             }
         }
-        .task(id: settings.xtream) { await check(announce: false) }
+        .task(id: account) { await check(announce: false) }
         .sheet(item: $editing) { field in
             sheet(for: field)
         }
         .confirmationDialog("Remove this IPTV account?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove account", role: .destructive) {
-                settings.xtream = XtreamAccount()
-                Task {
-                    await XtreamCache.shared.clearGuide()
-                    await SportsGuide.shared.clear()
+                let wasInUse = isInUse
+                settings.removeAccount(id: account.id)
+                if wasInUse {
+                    Task {
+                        await XtreamCache.shared.clearGuide()
+                        await SportsGuide.shared.clear()
+                    }
                 }
                 dismiss()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Live TV and Sports channels stop working until you add a login again.")
+            Text(settings.xtreamAccounts.count > 1
+                 ? "Its favourites, folders and reminders are removed too."
+                 : "Live TV and Sports channels stop working until you add a login again.")
         }
     }
 
@@ -442,22 +526,22 @@ struct IPTVAccountView: View {
         case .name:
             NameSheet(title: "Account name", initial: account.name, placeholder: "e.g. My provider",
                       allowsEmpty: true) { value in
-                settings.xtream.name = value
+                update { $0.name = value }
             }
         case .server:
             NameSheet(title: "Server", initial: account.server, placeholder: "http://host:port",
                       autocapitalize: false) { value in
-                settings.xtream.server = value
+                update { $0.server = value }
             }
         case .username:
             NameSheet(title: "Username", initial: account.username, placeholder: "Username",
                       autocapitalize: false) { value in
-                settings.xtream.username = value
+                update { $0.username = value }
             }
         case .password:
             NameSheet(title: "Password", initial: account.password, placeholder: "Password",
                       secure: true, autocapitalize: false) { value in
-                settings.xtream.password = value
+                update { $0.password = value }
             }
         }
     }
@@ -465,7 +549,7 @@ struct IPTVAccountView: View {
     private func check(announce: Bool) async {
         if announce { testNote = "Checking…" }
         state = .checking("Checking…")
-        let (newState, newInfo) = await ConnectionCheck.iptv(settings)
+        let (newState, newInfo) = await ConnectionCheck.iptv(account, userAgent: settings.prefs.iptvUserAgent)
         state = newState
         info = newInfo
         if announce {
@@ -476,7 +560,7 @@ struct IPTVAccountView: View {
             groupCount = nil
             return
         }
-        let client = settings.xtreamClient
+        let client = XtreamClient(account: account, userAgent: settings.prefs.iptvUserAgent)
         channelCount = (try? await XtreamCache.shared.liveStreams(client))?.count
         groupCount = (try? await XtreamCache.shared.liveCategories(client))?.count
     }
