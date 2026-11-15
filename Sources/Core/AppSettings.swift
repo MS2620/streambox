@@ -53,7 +53,23 @@ struct AddonEntry: Codable, Identifiable, Hashable {
 /// All user-supplied credentials. Everything is stored in the Keychain because
 /// addon URLs can carry private configuration.
 final class AppSettings: ObservableObject {
-    @Published var tmdbToken: String { didSet { Keychain.set(tmdbToken, for: "tmdbToken") } }
+    /// The token you entered yourself, if any (Settings › Connections › TMDB).
+    @Published var ownTmdbToken: String { didSet { Keychain.set(ownTmdbToken, for: "tmdbToken") } }
+
+    /// The token built into this copy (GitHub secret TMDB_TOKEN), if any.
+    static let builtInTMDBToken: String = {
+        let value = (Bundle.main.object(forInfoDictionaryKey: "TMDBToken") as? String ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        return value.hasPrefix("$(") ? "" : value
+    }()
+
+    /// The token in use: yours if you've entered one, otherwise the built-in one.
+    /// Setting it sets yours; setting "" goes back to the built-in one.
+    var tmdbToken: String {
+        get { ownTmdbToken.isEmpty ? Self.builtInTMDBToken : ownTmdbToken }
+        set { ownTmdbToken = newValue }
+    }
+    var usingBuiltInTMDB: Bool { ownTmdbToken.isEmpty && !Self.builtInTMDBToken.isEmpty }
     @Published var xtream: XtreamAccount { didSet { Keychain.setCodable(xtream, for: "xtream") } }
     @Published var addons: [AddonEntry] { didSet { Keychain.setCodable(addons, for: "addons") } }
     @Published var prefs: Preferences {
@@ -78,7 +94,7 @@ final class AppSettings: ObservableObject {
     }
 
     init() {
-        tmdbToken = Keychain.string(for: "tmdbToken") ?? ""
+        ownTmdbToken = Keychain.string(for: "tmdbToken") ?? ""
         // Older versions stored a Real-Debrid key; StreamBox no longer uses one.
         Keychain.setData(nil, for: "realDebridKey")
         xtream = Keychain.codable(XtreamAccount.self, for: "xtream") ?? XtreamAccount()

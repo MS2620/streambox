@@ -491,8 +491,8 @@ struct TMDBAccountView: View {
     @State private var confirmingRemove = false
 
     private var maskedToken: String {
-        let token = settings.tmdbToken
-        guard !token.isEmpty else { return "Not set" }
+        let token = settings.ownTmdbToken
+        guard !token.isEmpty else { return settings.usingBuiltInTMDB ? "Built in" : "Not set" }
         return "••••" + String(token.suffix(4))
     }
 
@@ -511,7 +511,9 @@ struct TMDBAccountView: View {
                         }
                         .buttonStyle(PlainPressStyle())
                     }
-                    SettingsNote("Free from themoviedb.org → Settings → API. Use the long \"API Read Access Token\", not the short API key.")
+                    SettingsNote(!AppSettings.builtInTMDBToken.isEmpty
+                        ? "StreamBox has a TMDB key built in, so there's nothing to set up. To use your own instead, get the long \"API Read Access Token\" from themoviedb.org → Settings → API."
+                        : "Free from themoviedb.org → Settings → API. Use the long \"API Read Access Token\", not the short API key.")
 
                     GlassPanel("Catalogue") {
                         SettingsOptionRow("Language", icon: "globe", selection: $settings.prefs.tmdbLanguage,
@@ -532,10 +534,11 @@ struct TMDBAccountView: View {
                         Button {
                             confirmingRemove = true
                         } label: {
-                            ListRowLabel(title: "Remove token", icon: "trash", destructive: true)
+                            ListRowLabel(title: AppSettings.builtInTMDBToken.isEmpty ? "Remove token" : "Remove your token",
+                                         icon: "trash", destructive: true)
                         }
                         .buttonStyle(PlainPressStyle())
-                        .disabled(settings.tmdbToken.isEmpty)
+                        .disabled(settings.ownTmdbToken.isEmpty)
                     }
                 }
                 .frame(maxWidth: 1100)
@@ -545,7 +548,7 @@ struct TMDBAccountView: View {
         }
         .task(id: settings.tmdbToken) { await check() }
         .sheet(isPresented: $editing) {
-            NameSheet(title: "TMDB API Read Access Token", initial: settings.tmdbToken, placeholder: "Token",
+            NameSheet(title: "TMDB API Read Access Token", initial: settings.ownTmdbToken, placeholder: "Token",
                       secure: true, autocapitalize: false) { value in
                 settings.tmdbToken = value.trimmingCharacters(in: .whitespacesAndNewlines)
             }
@@ -554,7 +557,9 @@ struct TMDBAccountView: View {
             Button("Remove token", role: .destructive) { settings.tmdbToken = "" }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Home, Movies, Series, Calendar and Search need it to show anything.")
+            Text(AppSettings.builtInTMDBToken.isEmpty
+                 ? "Home, Movies, Series, Calendar and Search need it to show anything."
+                 : "StreamBox goes back to its built-in key.")
         }
     }
 

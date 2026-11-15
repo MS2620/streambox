@@ -79,7 +79,7 @@ final class BackupService: ObservableObject {
     func backUp(settings: AppSettings) async throws -> String {
         guard let base, !password.isEmpty else { throw BackupError.noServer }
         let payload = BackupPayload(
-            tmdbToken: settings.tmdbToken,
+            tmdbToken: settings.ownTmdbToken,
             xtream: settings.xtream,
             addons: settings.addons,
             preferences: try JSONEncoder().encode(settings.prefs),
