@@ -280,6 +280,10 @@ struct Preferences: Codable, Equatable {
 
     private static let key = "preferences.v1"
 
+    /// False on a fresh install: deleting the app wipes its saved preferences (but not the
+    /// Keychain, where logins and addons live).
+    static var hasSaved: Bool { UserDefaults.standard.data(forKey: key) != nil }
+
     static func load() -> Preferences {
         guard let data = UserDefaults.standard.data(forKey: key) else { return Preferences() }
         return decode(data) ?? Preferences()
