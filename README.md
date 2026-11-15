@@ -1,4 +1,4 @@
-# StreamBox (tvOS)
+# Tellio (tvOS)
 
 An Apple TV app that:
 

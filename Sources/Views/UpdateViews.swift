@@ -78,7 +78,7 @@ struct UpdateNotes: View {
                 Text(release.notes.isEmpty ? "No notes for this build." : release.notes)
                     .font(.system(size: 24))
                     .foregroundStyle(.white.opacity(0.85))
-                Text("Install it with atvloadly from the release on GitHub (MS2620/streambox, Releases).")
+                Text("Install it with atvloadly from the release on GitHub (MS2620/tellio, Releases).")
                     .font(.system(size: 20))
                     .foregroundStyle(.white.opacity(0.55))
             }

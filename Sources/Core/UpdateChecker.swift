@@ -16,7 +16,7 @@ final class UpdateChecker: ObservableObject {
     /// The launch card: shown once per new build.
     @Published var showCard = false
 
-    private static let releasesURL = URL(string: "https://api.github.com/repos/MS2620/streambox/releases?per_page=10")!
+    private static let releasesURL = URL(string: "https://api.github.com/repos/MS2620/tellio/releases?per_page=10")!
     private static let dismissedKey = "updateCardDismissedBuild"
 
     /// This app's build number (the GitHub Actions run that built it).
