@@ -60,12 +60,21 @@ final class AppSettings: ObservableObject {
     /// The token you entered yourself, if any (Settings › Connections › TMDB).
     @Published var ownTmdbToken: String { didSet { Keychain.set(ownTmdbToken, for: "tmdbToken") } }
 
-    /// The token built into this copy (GitHub secret TMDB_TOKEN), if any.
+    /// The token built into this copy (GitHub secret TMDB_TOKEN), if any. The build stores it
+    /// scrambled ("x1:" + base64 of the token XOR-ed with `tokenMask`) so it isn't readable as
+    /// plain text in the app file; a plain value (e.g. a fork's own build) still works.
     static let builtInTMDBToken: String = {
         let value = (Bundle.main.object(forInfoDictionaryKey: "TMDBToken") as? String ?? "")
             .trimmingCharacters(in: .whitespaces)
-        return value.hasPrefix("$(") ? "" : value
+        if value.hasPrefix("$(") { return "" }
+        guard value.hasPrefix("x1:") else { return value }
+        guard let data = Data(base64Encoded: String(value.dropFirst(3))) else { return "" }
+        let bytes = data.enumerated().map { $0.element ^ tokenMask[$0.offset % tokenMask.count] }
+        return String(decoding: bytes, as: UTF8.self)
     }()
+
+    /// Must match TOKEN_MASK in .github/workflows/build.yml.
+    private static let tokenMask: [UInt8] = Array("T3ll10-sh3lf-m4sk-2026".utf8)
 
     /// The token in use: yours if you've entered one, otherwise the built-in one.
     /// Setting it sets yours; setting "" goes back to the built-in one.

@@ -82,6 +82,23 @@ jobs:
           PY
           grep LIBRARY_VERSIONS "$GITHUB_ENV"
 
+      # Scramble the built-in TMDB token so it isn't plain text in the app file.
+      # The app unscrambles it (AppSettings.builtInTMDBToken); TOKEN_MASK must match it there.
+      - name: Scramble built-in keys
+        env:
+          TMDB_TOKEN_PLAIN: ${{ secrets.TMDB_TOKEN }}
+          TOKEN_MASK: T3ll10-sh3lf-m4sk-2026
+        run: |
+          SCRAMBLED=$(python3 - <<'PY'
+          import base64, os
+          token, mask = os.environ.get("TMDB_TOKEN_PLAIN", "").strip().encode(), os.environ["TOKEN_MASK"].encode()
+          print("x1:" + base64.b64encode(bytes(b ^ mask[i % len(mask)] for i, b in enumerate(token))).decode() if token else "")
+          PY
+          )
+          # Keep it out of the public build logs too.
+          [ -n "$SCRAMBLED" ] && echo "::add-mask::$SCRAMBLED"
+          echo "TMDB_TOKEN_SCRAMBLED=$SCRAMBLED" >> "$GITHUB_ENV"
+
       - name: Build for tvOS (unsigned)
         run: |
           xcodebuild -version
@@ -95,7 +112,7 @@ jobs:
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             SWIFT_COMPILATION_MODE=singlefile \
             TRAKT_CLIENT_ID="${{ secrets.TRAKT_CLIENT_ID }}" \
-            TMDB_TOKEN="${{ secrets.TMDB_TOKEN }}" \
+            TMDB_TOKEN="$TMDB_TOKEN_SCRAMBLED" \
             SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
             FEEDBACK_URL="${{ secrets.FEEDBACK_URL }}" \
             LIBRARY_VERSIONS="$LIBRARY_VERSIONS" \
@@ -208,6 +225,23 @@ jobs:
       - name: Write App Store Connect API key
         run: echo "${{ secrets.ASC_KEY_P8_BASE64 }}" | base64 --decode > "$KEY_PATH"
 
+      # Scramble the built-in TMDB token so it isn't plain text in the app file.
+      # The app unscrambles it (AppSettings.builtInTMDBToken); TOKEN_MASK must match it there.
+      - name: Scramble built-in keys
+        env:
+          TMDB_TOKEN_PLAIN: ${{ secrets.TMDB_TOKEN }}
+          TOKEN_MASK: T3ll10-sh3lf-m4sk-2026
+        run: |
+          SCRAMBLED=$(python3 - <<'PY'
+          import base64, os
+          token, mask = os.environ.get("TMDB_TOKEN_PLAIN", "").strip().encode(), os.environ["TOKEN_MASK"].encode()
+          print("x1:" + base64.b64encode(bytes(b ^ mask[i % len(mask)] for i, b in enumerate(token))).decode() if token else "")
+          PY
+          )
+          # Keep it out of the public build logs too.
+          [ -n "$SCRAMBLED" ] && echo "::add-mask::$SCRAMBLED"
+          echo "TMDB_TOKEN_SCRAMBLED=$SCRAMBLED" >> "$GITHUB_ENV"
+
       - name: Archive
         run: |
           xcodebuild \
@@ -224,7 +258,7 @@ jobs:
             CODE_SIGN_STYLE=Automatic \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             TRAKT_CLIENT_ID="${{ secrets.TRAKT_CLIENT_ID }}" \
-            TMDB_TOKEN="${{ secrets.TMDB_TOKEN }}" \
+            TMDB_TOKEN="$TMDB_TOKEN_SCRAMBLED" \
             SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
             FEEDBACK_URL="${{ secrets.FEEDBACK_URL }}" \
             archive
