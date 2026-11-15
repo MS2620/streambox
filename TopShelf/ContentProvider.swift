@@ -1,7 +1,7 @@
 import TVServices
 
 /// Fills the Top Shelf with live games for the user's teams and Continue Watching,
-/// from what StreamBox last published.
+/// from what Tellio last published.
 final class ContentProvider: TVTopShelfContentProvider {
     override func loadTopShelfContent(completionHandler: @escaping (TVTopShelfContent?) -> Void) {
         let snapshot = TopShelfStore.read()

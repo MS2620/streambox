@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-/// Everything StreamBox keeps on this Apple TV, for Settings › Backup & restore.
+/// Everything Tellio keeps on this Apple TV, for Settings › Backup & restore.
 struct BackupPayload: Codable {
     var version = 1
     var created = Date()
@@ -147,8 +147,8 @@ final class BackupService: ObservableObject {
     /// The code plus the server password, stretched into an AES-256 key.
     private func key(code: String) -> SymmetricKey {
         let material = SymmetricKey(data: Data("\(code):\(password)".utf8))
-        return HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: Data("StreamBox backup v1".utf8),
-                                      info: Data("streambox".utf8), outputByteCount: 32)
+        return HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: Data("Tellio backup v1".utf8),
+                                      info: Data("tellio".utf8), outputByteCount: 32)
     }
 
     @discardableResult

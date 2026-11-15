@@ -7,7 +7,7 @@ enum TopShelfPublisher {
     private static var lastPublished: TopShelfSnapshot?
     private static weak var settings: AppSettings?
     private static var trendingItems: [TMDBItem] = []
-    /// Titles on the shelf, so a card's streambox://title link can open them.
+    /// Titles on the shelf, so a card's tellio://title link can open them.
     private(set) static var titles: [String: TMDBItem] = [:]
 
     /// Called once from the root view: My List comes from settings, and Trending is the fallback.
@@ -27,7 +27,7 @@ enum TopShelfPublisher {
         titles[item.uid] = item
         return TopShelfItem(id: "title-\(item.uid)", title: item.displayTitle,
                             imageURL: item.backdropURL?.absoluteString,
-                            link: "streambox://title?uid=\(encode(item.uid))")
+                            link: "tellio://title?uid=\(encode(item.uid))")
     }
 
     static func publish() {
@@ -39,7 +39,7 @@ enum TopShelfPublisher {
                 ?? "\(fixture.title) · LIVE"
             return TopShelfItem(id: "match-\(fixture.id)", title: title,
                                 imageURL: fixture.home?.logo,
-                                link: "streambox://match?id=\(encode(fixture.id))")
+                                link: "tellio://match?id=\(encode(fixture.id))")
         }
 
         snapshot.continueWatching = WatchHistory.shared.latestPerTitle
@@ -49,7 +49,7 @@ enum TopShelfPublisher {
                 let title = [entry.item.displayTitle, entry.episodeLabel].compactMap { $0 }.joined(separator: " · ")
                 return TopShelfItem(id: "resume-\(entry.id)", title: title,
                                     imageURL: entry.item.backdropURL?.absoluteString,
-                                    link: "streambox://resume?key=\(encode(entry.id))",
+                                    link: "tellio://resume?key=\(encode(entry.id))",
                                     progress: entry.fraction)
             }
 
@@ -65,7 +65,7 @@ enum TopShelfPublisher {
                 let when = [session, "\(DayFormat.label(time)) \(DayFormat.time(time))"].compactMap { $0 }.joined(separator: " · ")
                 return TopShelfItem(id: "upcoming-\(fixture.id)", title: "\(fixture.title) · \(when)",
                                     imageURL: fixture.home?.logo,
-                                    link: "streambox://match?id=\(encode(fixture.id))")
+                                    link: "tellio://match?id=\(encode(fixture.id))")
             }
 
         snapshot.myList = extra != .myList ? [] : (settings?.prefs.myList ?? [])
@@ -91,7 +91,7 @@ enum TopShelfPublisher {
     }
 }
 
-/// Where a streambox:// link leads.
+/// Where a tellio:// link leads.
 enum DeepLink: Identifiable {
     case resume(StreamTarget)
     case match(Fixture)
@@ -105,10 +105,10 @@ enum DeepLink: Identifiable {
         }
     }
 
-    /// streambox://resume?key=… and streambox://match?id=…
+    /// tellio://resume?key=… and tellio://match?id=…
     @MainActor
     init?(url: URL) {
-        guard url.scheme == "streambox",
+        guard url.scheme == "tellio",
               let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return nil }
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
         switch url.host {

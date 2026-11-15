@@ -13,7 +13,7 @@ The app ships with no content and no sources. Everything is supplied by the user
 ```
 project.yml                  XcodeGen spec (the .xcodeproj is generated on CI)
 Sources/
-  StreamBoxApp.swift         App entry + tab bar
+  TellioApp.swift         App entry + tab bar
   Core/                      Keychain, settings, helpers
   Services/                  TMDB, Stremio addon, Xtream, sports and TV guide search
   Player/                    AetherEngine holder + subtitle overlay
@@ -40,13 +40,13 @@ Sources/
 2. Sign in at codemagic.io with GitHub and add the repo as an application.
 3. Codemagic detects `codemagic.yaml`. Start the **tvOS unsigned IPA** workflow
    (or push to `main` once the webhook is set up).
-4. Download `StreamBox-unsigned.ipa` from the build's Artifacts and sideload it
+4. Download `Tellio-unsigned.ipa` from the build's Artifacts and sideload it
    with Sideloadly or atvloadly using your Apple ID.
 
 ## Turning on TestFlight (needs a paid account)
 
 1. Join the Apple Developer Program.
-2. In the developer portal, register the bundle ID `com.mauro.streambox` (or change it in `project.yml`).
+2. In the developer portal, register the bundle ID `com.mauro.tellio` (or change it in `project.yml`).
 3. In App Store Connect, create a new **tvOS** app with that bundle ID.
 4. In App Store Connect → Users and Access → Integrations, create an **API key with Admin access**
    (Admin is needed so CI can create the distribution certificate).

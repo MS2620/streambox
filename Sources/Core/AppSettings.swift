@@ -114,7 +114,7 @@ final class AppSettings: ObservableObject {
 
     init() {
         ownTmdbToken = Keychain.string(for: "tmdbToken") ?? ""
-        // Older versions stored a Real-Debrid key; StreamBox no longer uses one.
+        // Older versions stored a Real-Debrid key; Tellio no longer uses one.
         Keychain.setData(nil, for: "realDebridKey")
         let active = Keychain.codable(XtreamAccount.self, for: "xtream") ?? XtreamAccount()
         var accounts = Keychain.codable([XtreamAccount].self, for: "xtreamAccounts") ?? []
@@ -128,7 +128,7 @@ final class AppSettings: ObservableObject {
         addons = Keychain.codable([AddonEntry].self, for: "addons") ?? []
         let freshInstall = !Preferences.hasSaved
         prefs = Preferences.load()
-        // Anyone who already set StreamBox up (before the setup screens existed) skips them.
+        // Anyone who already set Tellio up (before the setup screens existed) skips them.
         // A fresh install always gets setup, even with logins left in the Keychain by an
         // earlier install; its steps start filled in with them.
         if !freshInstall && !prefs.setupDone && (active.isConfigured || !addons.isEmpty
