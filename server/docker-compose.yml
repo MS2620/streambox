@@ -2,7 +2,7 @@
 # In the tunnel, point backup.<your domain> at:  http://streambox-backup:8085
 services:
   streambox-backup:
-    build: https://github.com/MS2620/streambox.git#main:server
+    build: https://github.com/MS2620/tellio.git#main:server
     container_name: streambox-backup
     restart: unless-stopped
     environment:
