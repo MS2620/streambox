@@ -1,0 +1,34 @@
+Tellio
+Copyright (c) 2026 Mauro Sousa. All rights reserved.
+
+This repository is public so that people can download Tellio, read how it
+works and report problems. It is not open source.
+
+You MAY:
+  - download the official Tellio builds published on this repository's
+    Releases page and install them on your own devices for your own
+    personal, non-commercial use;
+  - read the source code, and open issues about it.
+
+You MAY NOT, without written permission from the copyright holder:
+  - copy, modify, merge, translate or create works based on any part of
+    this source code, its designs, artwork, logo or name;
+  - publish, distribute, sublicense or sell this software or any modified
+    version of it, in source or compiled form, including re-uploading the
+    builds elsewhere or publishing them under another name;
+  - use any part of it in another product, commercial or not.
+
+Forking this repository on GitHub, as GitHub's Terms of Service allow, does
+not grant any of the rights above.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+Third-party components included in Tellio builds (such as AetherEngine,
+FFmpeg and the Sentry SDK) are not covered by this licence. Each remains
+under its own licence; see "Third-party software" in README.md.
+
+For permission requests, open an issue on this repository.

@@ -125,6 +125,17 @@ jobs:
           TAG="build-${{ github.run_number }}"
           TITLE="Tellio build ${{ github.run_number }}"
           git log -1 --format='%B' | grep -v -e '^Co-Authored-By:' -e '^Claude-Session:' > notes.md
+          # The exact library versions in this build (AetherEngine's licence asks for this).
+          python3 - >> notes.md <<'PY'
+          import glob, json
+          files = glob.glob("Tellio.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
+          if files:
+              pins = json.load(open(files[0])).get("pins", [])
+              print("\n---\nThird-party components in this build:")
+              for pin in sorted(pins, key=lambda p: p.get("identity", "")):
+                  version = pin.get("state", {}).get("version") or pin.get("state", {}).get("revision", "")[:7]
+                  print(f"- {pin.get('location', '').removesuffix('.git')} @ {version}")
+          PY
           cp Tellio-unsigned.ipa Tellio.ipa
           gh release create "$TAG" Tellio.ipa \
             --target "${{ github.sha }}" \
