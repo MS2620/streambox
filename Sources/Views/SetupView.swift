@@ -29,6 +29,9 @@ struct SetupView: View {
                 if let previous = Step(rawValue: step.rawValue - 1) { go(previous) }
             }
         }
+        // Pages opened from setup (teams, leagues, add addon, restore) borrow their background
+        // from the screen behind them; here that would be the app, so give them StreamBox's own.
+        .background { AppBackground() }
     }
 
     private func go(_ next: Step) {
