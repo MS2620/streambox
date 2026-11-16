@@ -82,7 +82,9 @@ struct LiveSearchView: View {
                             Button {
                                 onPlay(channel, channels)
                             } label: {
-                                ListRowLabel(title: channel.name, subtitle: onNow(channel), icon: "tv",
+                                ListRowLabel(title: channel.name,
+                                             subtitle: QualitySort.joined([channel.folderName, onNow(channel)]),
+                                             icon: "tv",
                                              logoURL: channel.icon.flatMap { URL(string: $0) }, showsLogo: true)
                             }
                             .buttonStyle(PlainPressStyle())
@@ -95,7 +97,7 @@ struct LiveSearchView: View {
                                 onPlay(hit.channel, programmes.map(\.channel))
                             } label: {
                                 ListRowLabel(title: hit.entry.title,
-                                             subtitle: hit.channel.name,
+                                             subtitle: QualitySort.joined([hit.channel.name, hit.channel.folderName]),
                                              icon: "tv",
                                              logoURL: hit.channel.icon.flatMap { URL(string: $0) }, showsLogo: true,
                                              trailing: hit.entry.start.map { ($0 <= Date() ? "On now · " : "") + DayFormat.time($0) })

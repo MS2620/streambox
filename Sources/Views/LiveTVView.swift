@@ -49,6 +49,8 @@ struct LiveTVView: View {
     @State private var choosingAccount = false
     /// The account the groups were loaded for, so switching account starts on its own groups.
     @State private var loadedAccountID: String?
+    /// For groups sorted by quality: the qualities that have channels, in folder order.
+    @State private var qualityFolders: [String: [ChannelQuality]] = [:]
 
     private static let favouritesID = "__favourites"
     private static let recentID = "__recent"
@@ -83,11 +85,21 @@ struct LiveTVView: View {
         var list = prefs.folders.map {
             GroupEntry(id: Self.folderPrefix + $0.id, name: $0.name, icon: "square.stack.3d.up")
         }
-        list += categories
-            .filter { !prefs.hiddenCategoryIDs.contains($0.id) }
-            .filter { !(prefs.hideLockedGroups && parental.isLocked(categoryID: $0.id, prefs: prefs)) }
-            .map { GroupEntry(id: $0.id, name: $0.name,
-                              icon: parental.isLocked(categoryID: $0.id, prefs: prefs) ? "lock.fill" : "folder") }
+        for category in categories {
+            if prefs.hiddenCategoryIDs.contains(category.id) { continue }
+            let locked = parental.isLocked(categoryID: category.id, prefs: prefs)
+            if prefs.hideLockedGroups && locked { continue }
+            let icon = locked ? "lock.fill" : "folder"
+            if prefs.qualitySortCategoryIDs.contains(category.id) {
+                // Sorted by quality: its 4K, FHD, HD and SD folders take its place.
+                for quality in qualityFolders[category.id] ?? [] {
+                    list.append(GroupEntry(id: QualitySort.folderID(category: category.id, quality: quality),
+                                           name: "\(category.name) \(quality.label)", icon: icon))
+                }
+            } else {
+                list.append(GroupEntry(id: category.id, name: category.name, icon: icon))
+            }
+        }
         if !prefs.favouriteChannelIDs.isEmpty {
             let favourites = GroupEntry(id: Self.favouritesID, name: "Favourites", icon: "star")
             if prefs.favouritesFirst {
@@ -102,6 +114,13 @@ struct LiveTVView: View {
             top.append(GroupEntry(id: Self.recentID, name: "Recent", icon: "clock.arrow.circlepath"))
         }
         return top + list
+    }
+
+    /// Favourites, Recent and your own folders mix channels from several groups, so a channel
+    /// from a group sorted by quality shows which folder it came from.
+    private var showsFolderNames: Bool {
+        guard let selectedID else { return false }
+        return selectedID == Self.favouritesID || selectedID == Self.recentID || selectedID.hasPrefix(Self.folderPrefix)
     }
 
     private var isFolderSelected: Bool {
@@ -127,6 +146,7 @@ struct LiveTVView: View {
 
     private var channelsKey: String {
         "\(channelsReload)|\(selectedID ?? "")|\(prefs.hiddenChannelIDs.count)|\(prefs.folders.hashValue)|\(prefs.favouriteChannelIDs.count)"
+            + "|\(prefs.qualitySortCategoryIDs.sorted())"
             + (selectedID == Self.recentID ? "|\(prefs.recentChannelIDs)" : "")
     }
 
@@ -182,6 +202,10 @@ struct LiveTVView: View {
             }
         }
         .task(id: settings.xtream) { await loadCategories() }
+        .task(id: prefs.qualitySortCategoryIDs) {
+            await loadQualityFolders()
+            chooseGroupIfNeeded()
+        }
         .task(id: channelsKey) { await loadChannels() }
         .task(id: guideKey) { await loadGuide() }
         .task {
@@ -276,7 +300,8 @@ struct LiveTVView: View {
                                     GuideChannelCell(channel: channel,
                                                      number: prefs.showChannelNumbers ? channel.number : nil,
                                                      highlighted: infoChannel?.id == channel.id,
-                                                     favourite: prefs.favouriteChannelIDs.contains(channel.id))
+                                                     favourite: prefs.favouriteChannelIDs.contains(channel.id),
+                                                     folderName: showsFolderNames ? channel.folderName : nil)
                                         .frame(width: Self.channelColumn, height: Self.rowHeight)
                                 }
                             }
@@ -475,7 +500,8 @@ struct LiveTVView: View {
                                                current: prefs.showEPG ? current(channel.id) : nil,
                                                next: prefs.showEPG ? next(channel.id) : nil,
                                                now: now,
-                                               favourite: prefs.favouriteChannelIDs.contains(channel.id))
+                                               favourite: prefs.favouriteChannelIDs.contains(channel.id),
+                                               folderName: showsFolderNames ? channel.folderName : nil)
                             }
                             .buttonStyle(PlainPressStyle())
                             .focused($focusedCell, equals: "\(channel.id)")
@@ -568,11 +594,11 @@ struct LiveTVView: View {
     /// The selected group is locked and the PIN hasn't been entered.
     private var selectedIsLocked: Bool {
         guard let selectedID else { return false }
-        return parental.isLocked(categoryID: selectedID, prefs: prefs)
+        return parental.isLocked(categoryID: QualitySort.baseCategory(of: selectedID), prefs: prefs)
     }
 
     private func select(_ group: GroupEntry) {
-        if parental.isLocked(categoryID: group.id, prefs: prefs) {
+        if parental.isLocked(categoryID: QualitySort.baseCategory(of: group.id), prefs: prefs) {
             pendingGroup = group
             askingPIN = true
             return
@@ -642,18 +668,42 @@ struct LiveTVView: View {
         do {
             categories = try await XtreamCache.shared.liveCategories(client)
             error = nil
-            let ids = groups.map(\.id)
-            if let selectedID, ids.contains(selectedID) { return }
-            // Opens on a real group, not Search or Recent.
-            let opening = ids.filter { $0 != Self.searchID && $0 != Self.recentID }
-            if prefs.rememberLastCategory, let last = prefs.lastCategoryID, ids.contains(last) {
-                selectedID = last
-            } else {
-                selectedID = opening.first ?? ids.first
-            }
+            await loadQualityFolders()
+            chooseGroupIfNeeded()
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// Keeps the selection if it still exists, otherwise opens the last or first real group.
+    private func chooseGroupIfNeeded() {
+        let ids = groups.map(\.id)
+        guard !categories.isEmpty else { return }
+        if let selectedID, ids.contains(selectedID) { return }
+        // Opens on a real group, not Search or Recent.
+        let opening = ids.filter { $0 != Self.searchID && $0 != Self.recentID }
+        if prefs.rememberLastCategory, let last = prefs.lastCategoryID, ids.contains(last) {
+            selectedID = last
+        } else {
+            selectedID = opening.first ?? ids.first
+        }
+    }
+
+    /// Which quality folders the sorted groups need (only ones with channels show).
+    private func loadQualityFolders() async {
+        let chosen = prefs.qualitySortCategoryIDs
+        guard !chosen.isEmpty, settings.xtream.isConfigured else {
+            qualityFolders = [:]
+            return
+        }
+        let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
+        var found: [String: Set<ChannelQuality>] = [:]
+        for channel in all {
+            guard let category = channel.categoryID, chosen.contains(category),
+                  let quality = channel.quality, !prefs.hiddenChannelIDs.contains(channel.id) else { continue }
+            found[category, default: []].insert(quality)
+        }
+        qualityFolders = found.mapValues { present in ChannelQuality.allCases.filter { present.contains($0) } }
     }
 
     private func loadChannels() async {
@@ -683,6 +733,11 @@ struct LiveTVView: View {
             let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
             let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             loaded = ids.compactMap { byID[$0] }
+        } else if let folder = QualitySort.parseFolderID(selectedID) {
+            let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
+            loaded = all.filter {
+                $0.categoryID == folder.category && $0.quality == folder.quality && !prefs.hiddenChannelIDs.contains($0.id)
+            }
         } else {
             let all = (try? await client.liveStreams(categoryID: selectedID)) ?? []
             loaded = all.filter { !prefs.hiddenChannelIDs.contains($0.id) }
@@ -747,6 +802,7 @@ private struct GuideChannelCell: View {
     let number: Int?
     let highlighted: Bool
     let favourite: Bool
+    var folderName: String? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -762,9 +818,17 @@ private struct GuideChannelCell: View {
                 Image(systemName: "tv").foregroundStyle(.white.opacity(0.5))
             }
             .frame(width: 64, height: 40)
-            Text(channel.name)
-                .font(.system(size: 20, weight: .bold))
-                .lineLimit(2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(channel.name)
+                    .font(.system(size: 20, weight: .bold))
+                    .lineLimit(folderName == nil ? 2 : 1)
+                if let folderName {
+                    Text(folderName)
+                        .font(.system(size: 15, weight: .medium))
+                        .opacity(0.65)
+                        .lineLimit(1)
+                }
+            }
             Spacer(minLength: 0)
             if favourite {
                 Image(systemName: "star.fill")
@@ -828,6 +892,7 @@ private struct ChannelListRow: View {
     let next: XtreamEPGEntry?
     let now: Date
     let favourite: Bool
+    var folderName: String? = nil
     @Environment(\.isFocused) private var isFocused
 
     private var progress: Double? {
@@ -853,7 +918,7 @@ private struct ChannelListRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(channel.name)
+                    Text([channel.name, folderName].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 20, weight: .bold))
                         .opacity(0.7)
                         .lineLimit(1)

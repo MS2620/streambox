@@ -803,7 +803,7 @@ enum ChannelFinder {
     /// Best first; favourites and folder channels first among equals, then HD.
     private static func rank(_ matches: [ChannelMatch], preferred: Set<Int>) -> [ChannelMatch] {
         func isHD(_ channel: XtreamChannel) -> Bool {
-            let name = channel.name.lowercased()
+            let name = channel.providerName.lowercased()
             return name.contains("hd") || name.contains("fhd") || name.contains("4k") || name.contains("uhd")
         }
         return Array(matches.sorted { a, b in
@@ -865,7 +865,7 @@ enum ChannelFinder {
             .map(\.id))
         func isFromCountry(_ channel: XtreamChannel) -> Bool {
             if let category = channel.categoryID, countryCategories.contains(category) { return true }
-            let name = channel.name.lowercased()
+            let name = channel.providerName.lowercased()
             return countryCodes.contains { code in
                 name.hasPrefix(code + "|") || name.hasPrefix(code + " |") || name.hasPrefix(code + ":")
                     || name.hasPrefix(code + " ") || name.hasPrefix("[" + code + "]")

@@ -19,11 +19,22 @@ struct XtreamCategory: Decodable, Identifiable, Hashable {
 struct XtreamChannel: Decodable, Identifiable, Hashable {
     let id: Int
     let number: Int?
-    let name: String
+    /// The name shown everywhere; tidied when its group is sorted by quality.
+    var name: String
     let icon: String?
     let categoryID: String?
     /// The channel's id in the provider's XMLTV guide; several streams can share one.
     let epgChannelID: String?
+
+    // Set only for channels in a group sorted by quality (QualitySort).
+    /// The provider's own name, before tidying.
+    var originalName: String? = nil
+    var quality: ChannelQuality? = nil
+    /// The quality folder it's in, "UK | Sports FHD", shown where groups are mixed.
+    var folderName: String? = nil
+
+    /// The provider's name, even when the shown one is tidied (for matching and ranking).
+    var providerName: String { originalName ?? name }
 
     private enum CodingKeys: String, CodingKey {
         case streamID = "stream_id"
@@ -355,6 +366,7 @@ actor XtreamCache {
 
     private var streams: (key: String, date: Date, value: [XtreamChannel])?
     private var categories: (key: String, date: Date, value: [XtreamCategory])?
+    private var tidied: (key: String, chosen: Set<String>, count: Int, date: Date, value: [XtreamChannel])?
     private var guides: [String: (date: Date, value: [XtreamEPGEntry])] = [:]
     private var failures: [String: Date] = [:]
     private var movieCache: (key: String, value: [XtreamVOD])?
@@ -385,7 +397,24 @@ actor XtreamCache {
         return result
     }
 
+    /// Every live channel of the account, with names tidied in the groups sorted by quality.
     func liveStreams(_ client: XtreamClient) async throws -> [XtreamChannel] {
+        let raw = try await rawLiveStreams(client)
+        let chosen = QualitySort.activeCategoryIDs
+        guard !chosen.isEmpty else { return raw }
+        let key = accountKey(client)
+        if let tidied, tidied.key == key, tidied.chosen == chosen, tidied.count == raw.count,
+           tidied.date >= (streams?.date ?? .distantPast) {
+            return tidied.value
+        }
+        let categories = (try? await liveCategories(client)) ?? []
+        let value = QualitySort.apply(raw, chosen: chosen, categories: categories)
+        tidied = (key, chosen, raw.count, Date(), value)
+        return value
+    }
+
+    /// The channels exactly as the provider names them.
+    func rawLiveStreams(_ client: XtreamClient) async throws -> [XtreamChannel] {
         let key = accountKey(client)
         if let streams, streams.key == key, Date().timeIntervalSince(streams.date) < Self.listLifetime {
             return streams.value

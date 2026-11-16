@@ -63,13 +63,25 @@ struct Acknowledgement: Identifiable {
 struct AcknowledgementsView: View {
     var body: some View {
         SettingsPage("Acknowledgements") {
-            Text("Tellio is built with this software. Select one to read its licence.")
+            Text("Tellio is built with this software and data. Select one to read its licence.")
                 .font(.system(size: 22, weight: .medium))
                 .foregroundStyle(.white.opacity(0.7))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 30)
 
             GlassPanel {
+                // TMDB asks for this credit; a selectable row so the remote can reach it.
+                Button {} label: {
+                    ListRowLabel(title: "TMDB",
+                                 subtitle: "Film & TV information and artwork. This product uses the TMDB API but is not endorsed or certified by TMDB.",
+                                 trailing: "Data")
+                }
+                .buttonStyle(PlainPressStyle())
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(height: 1)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 4)
                 ForEach(Acknowledgement.all) { item in
                     NavigationLink {
                         LicenceTextView(item: item)

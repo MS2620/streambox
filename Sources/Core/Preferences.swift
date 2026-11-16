@@ -134,15 +134,17 @@ struct LiveAccountState: Codable, Equatable {
     var hiddenCategoryIDs: Set<String> = []
     var lockedCategoryIDs: Set<String> = []
     var folders: [ChannelFolder] = []
+    var qualitySortCategoryIDs: Set<String> = []
 
     private enum CodingKeys: String, CodingKey {
         case favouriteChannelIDs, recentChannelIDs, lastCategoryID, hiddenChannelIDs
-        case hiddenCategoryIDs, lockedCategoryIDs, folders
+        case hiddenCategoryIDs, lockedCategoryIDs, folders, qualitySortCategoryIDs
     }
 
     init(favouriteChannelIDs: Set<Int> = [], recentChannelIDs: [Int] = [], lastCategoryID: String? = nil,
          hiddenChannelIDs: Set<Int> = [], hiddenCategoryIDs: Set<String> = [],
-         lockedCategoryIDs: Set<String> = [], folders: [ChannelFolder] = []) {
+         lockedCategoryIDs: Set<String> = [], folders: [ChannelFolder] = [],
+         qualitySortCategoryIDs: Set<String> = []) {
         self.favouriteChannelIDs = favouriteChannelIDs
         self.recentChannelIDs = recentChannelIDs
         self.lastCategoryID = lastCategoryID
@@ -150,6 +152,7 @@ struct LiveAccountState: Codable, Equatable {
         self.hiddenCategoryIDs = hiddenCategoryIDs
         self.lockedCategoryIDs = lockedCategoryIDs
         self.folders = folders
+        self.qualitySortCategoryIDs = qualitySortCategoryIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -161,6 +164,7 @@ struct LiveAccountState: Codable, Equatable {
         hiddenCategoryIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .hiddenCategoryIDs)) ?? []
         lockedCategoryIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .lockedCategoryIDs)) ?? []
         folders = (try? c.decodeIfPresent([ChannelFolder].self, forKey: .folders)) ?? []
+        qualitySortCategoryIDs = (try? c.decodeIfPresent(Set<String>.self, forKey: .qualitySortCategoryIDs)) ?? []
     }
 }
 
@@ -248,6 +252,8 @@ struct Preferences: Codable, Equatable {
     var showChannelNumbers = false
     var hiddenChannelIDs: Set<Int> = []
     var folders: [ChannelFolder] = []
+    /// Groups split into 4K, FHD, HD and SD folders, with tidied channel names (Sort by quality).
+    var qualitySortCategoryIDs: Set<String> = []
     /// How often guide data is re-downloaded: hours, 0 = every launch, -1 = only manually.
     var epgRefreshHours = 6
     /// The provider's own movie and series libraries (VOD). Off by default.
@@ -268,7 +274,7 @@ struct Preferences: Codable, Equatable {
         LiveAccountState(favouriteChannelIDs: favouriteChannelIDs, recentChannelIDs: recentChannelIDs,
                          lastCategoryID: lastCategoryID, hiddenChannelIDs: hiddenChannelIDs,
                          hiddenCategoryIDs: hiddenCategoryIDs, lockedCategoryIDs: lockedCategoryIDs,
-                         folders: folders)
+                         folders: folders, qualitySortCategoryIDs: qualitySortCategoryIDs)
     }
 
     mutating func restoreLiveState(_ state: LiveAccountState) {
@@ -279,6 +285,7 @@ struct Preferences: Codable, Equatable {
         hiddenCategoryIDs = state.hiddenCategoryIDs
         lockedCategoryIDs = state.lockedCategoryIDs
         folders = state.folders
+        qualitySortCategoryIDs = state.qualitySortCategoryIDs
     }
 
     private static let key = "preferences.v1"

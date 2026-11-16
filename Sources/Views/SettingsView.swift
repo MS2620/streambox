@@ -70,13 +70,6 @@ struct SettingsView: View {
                                           }))
                     SettingsInfoRow("Top Shelf", icon: "rectangle.topthird.inset.filled", value: Self.topShelfStatus)
                     SettingsInfoRow("Player engine", icon: "cpu", value: "AetherEngine")
-                    // A selectable row (not a note) so the remote can scroll down to it.
-                    Button {} label: {
-                        ListRowLabel(title: "Film & TV data from TMDB",
-                                     subtitle: "This product uses the TMDB API but is not endorsed or certified by TMDB.",
-                                     icon: "film")
-                    }
-                    .buttonStyle(PlainPressStyle())
                     NavigationLink {
                         AcknowledgementsView()
                     } label: {
@@ -382,6 +375,16 @@ struct ContentSettingsView: View {
                                 value: "\(settings.prefs.folders.count)") {
                     FoldersSettingsView()
                 }
+                NavigationLink {
+                    QualitySortSettingsView()
+                } label: {
+                    let count = settings.prefs.qualitySortCategoryIDs.count
+                    ListRowLabel(title: "Sort by quality", subtitle: "Split groups into 4K, FHD, HD and SD folders",
+                                 icon: "line.3.horizontal.decrease",
+                                 trailing: count == 0 ? "Off" : (count == 1 ? "1 group" : "\(count) groups"),
+                                 trailingIcon: "chevron.right")
+                }
+                .buttonStyle(PlainPressStyle())
             }
             SettingsNote("Hide whole groups or single channels you never watch, and collect channels from any group into folders of your own. Folders appear at the top of Live TV.")
 
