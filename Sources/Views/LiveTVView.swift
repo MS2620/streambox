@@ -51,6 +51,8 @@ struct LiveTVView: View {
     @State private var loadedAccountID: String?
     /// For groups sorted by quality: the qualities that have channels, in folder order.
     @State private var qualityFolders: [String: [ChannelQuality]] = [:]
+    /// The channel being renamed (long-press › Rename…).
+    @State private var renaming: XtreamChannel?
 
     private static let favouritesID = "__favourites"
     private static let recentID = "__recent"
@@ -85,20 +87,27 @@ struct LiveTVView: View {
         var list = prefs.folders.map {
             GroupEntry(id: Self.folderPrefix + $0.id, name: $0.name, icon: "square.stack.3d.up")
         }
+        let merged = QualitySort.mergedGroups(categories, chosen: prefs.qualitySortCategoryIDs)
+        var shownLeads = Set<String>()
         for category in categories {
+            if let group = merged[category.id] {
+                // Sorted by quality: the 4K, FHD, HD and SD folders of it and its twins take
+                // their place, where the first of them was.
+                guard shownLeads.insert(group.lead).inserted else { continue }
+                let twins = merged.filter { $0.value.lead == group.lead }.map(\.key)
+                if twins.allSatisfy({ prefs.hiddenCategoryIDs.contains($0) }) { continue }
+                let locked = isLocked(groupID: group.lead)
+                if prefs.hideLockedGroups && locked { continue }
+                for quality in qualityFolders[group.lead] ?? [] {
+                    list.append(GroupEntry(id: QualitySort.folderID(category: group.lead, quality: quality),
+                                           name: "\(group.name) \(quality.label)", icon: locked ? "lock.fill" : "folder"))
+                }
+                continue
+            }
             if prefs.hiddenCategoryIDs.contains(category.id) { continue }
             let locked = parental.isLocked(categoryID: category.id, prefs: prefs)
             if prefs.hideLockedGroups && locked { continue }
-            let icon = locked ? "lock.fill" : "folder"
-            if prefs.qualitySortCategoryIDs.contains(category.id) {
-                // Sorted by quality: its 4K, FHD, HD and SD folders take its place.
-                for quality in qualityFolders[category.id] ?? [] {
-                    list.append(GroupEntry(id: QualitySort.folderID(category: category.id, quality: quality),
-                                           name: "\(category.name) \(quality.label)", icon: icon))
-                }
-            } else {
-                list.append(GroupEntry(id: category.id, name: category.name, icon: icon))
-            }
+            list.append(GroupEntry(id: category.id, name: category.name, icon: locked ? "lock.fill" : "folder"))
         }
         if !prefs.favouriteChannelIDs.isEmpty {
             let favourites = GroupEntry(id: Self.favouritesID, name: "Favourites", icon: "star")
@@ -146,7 +155,7 @@ struct LiveTVView: View {
 
     private var channelsKey: String {
         "\(channelsReload)|\(selectedID ?? "")|\(prefs.hiddenChannelIDs.count)|\(prefs.folders.hashValue)|\(prefs.favouriteChannelIDs.count)"
-            + "|\(prefs.qualitySortCategoryIDs.sorted())"
+            + "|\(prefs.qualitySortCategoryIDs.sorted())|\(prefs.channelNames.hashValue)"
             + (selectedID == Self.recentID ? "|\(prefs.recentChannelIDs)" : "")
     }
 
@@ -334,6 +343,13 @@ struct LiveTVView: View {
                     .padding(.bottom, 60)
                 }
             }
+        }
+        .fullScreenCover(item: $renaming) { channel in
+            NavigationStack {
+                RenameChannelView(channel: channel)
+            }
+            .background { AppBackground() }
+            .environmentObject(settings)
         }
         .fullScreenCover(item: $reminderPrompt) { item in
             ReminderPromptView(item: item) {
@@ -571,6 +587,9 @@ struct LiveTVView: View {
                 }
             }
         }
+        Button("Rename…", systemImage: "pencil") {
+            renaming = channel
+        }
         Button("Hide channel", systemImage: "eye.slash", role: .destructive) {
             settings.prefs.hiddenChannelIDs.insert(channel.id)
         }
@@ -594,11 +613,19 @@ struct LiveTVView: View {
     /// The selected group is locked and the PIN hasn't been entered.
     private var selectedIsLocked: Bool {
         guard let selectedID else { return false }
-        return parental.isLocked(categoryID: QualitySort.baseCategory(of: selectedID), prefs: prefs)
+        return isLocked(groupID: selectedID)
+    }
+
+    /// A group, or a quality folder: locked when its group or any merged twin is.
+    private func isLocked(groupID id: String) -> Bool {
+        let lead = QualitySort.baseCategory(of: id)
+        let merged = QualitySort.mergedGroups(categories, chosen: prefs.qualitySortCategoryIDs)
+        guard merged[lead] != nil else { return parental.isLocked(categoryID: lead, prefs: prefs) }
+        return merged.contains { $0.value.lead == lead && parental.isLocked(categoryID: $0.key, prefs: prefs) }
     }
 
     private func select(_ group: GroupEntry) {
-        if parental.isLocked(categoryID: QualitySort.baseCategory(of: group.id), prefs: prefs) {
+        if isLocked(groupID: group.id) {
             pendingGroup = group
             askingPIN = true
             return
@@ -699,9 +726,8 @@ struct LiveTVView: View {
         let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
         var found: [String: Set<ChannelQuality>] = [:]
         for channel in all {
-            guard let category = channel.categoryID, chosen.contains(category),
-                  let quality = channel.quality, !prefs.hiddenChannelIDs.contains(channel.id) else { continue }
-            found[category, default: []].insert(quality)
+            guard let lead = channel.folderGroupID, let quality = channel.quality, settings.isVisible(channel) else { continue }
+            found[lead, default: []].insert(quality)
         }
         qualityFolders = found.mapValues { present in ChannelQuality.allCases.filter { present.contains($0) } }
     }
@@ -736,11 +762,11 @@ struct LiveTVView: View {
         } else if let folder = QualitySort.parseFolderID(selectedID) {
             let all = (try? await XtreamCache.shared.liveStreams(client)) ?? []
             loaded = all.filter {
-                $0.categoryID == folder.category && $0.quality == folder.quality && !prefs.hiddenChannelIDs.contains($0.id)
+                $0.folderGroupID == folder.category && $0.quality == folder.quality && settings.isVisible($0)
             }
         } else {
             let all = (try? await client.liveStreams(categoryID: selectedID)) ?? []
-            loaded = all.filter { !prefs.hiddenChannelIDs.contains($0.id) }
+            loaded = QualitySort.applyCustomNames(all.filter { !prefs.hiddenChannelIDs.contains($0.id) })
         }
         guard !Task.isCancelled else { return }
         channels = loaded
@@ -748,7 +774,7 @@ struct LiveTVView: View {
 
     private nonisolated static func listings(_ client: XtreamClient, channelID: Int,
                                              from: Date, until: Date) async -> (Int, [XtreamEPGEntry]) {
-        let all = await XtreamCache.shared.fullEPG(client, streamID: channelID)
+        let all = await XtreamCache.shared.guide(client, streamID: channelID)
         let kept = all.filter { entry in
             guard let begins = entry.start, let ends = entry.end else { return false }
             return ends > from && begins < until

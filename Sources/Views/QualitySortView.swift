@@ -10,9 +10,10 @@ struct QualitySortSettingsView: View {
     @State private var loading = true
     @State private var error: String?
 
-    /// The provider's groups, without the ones hidden in Groups & channels.
-    private var shownGroups: [XtreamCategory] {
-        categories.filter { !settings.prefs.hiddenCategoryIDs.contains($0.id) }
+    /// The provider's groups, without the ones hidden in Groups & channels, with twins
+    /// ("UK | Entertainment" and "UK | Entertainment HEVC") as one row.
+    private var rows: [(ids: [String], name: String)] {
+        QualitySort.twinGroups(categories.filter { !settings.prefs.hiddenCategoryIDs.contains($0.id) })
     }
 
     var body: some View {
@@ -21,13 +22,13 @@ struct QualitySortSettingsView: View {
                 ProgressView().padding(40)
             } else if let error {
                 SettingsNote(error)
-            } else if shownGroups.isEmpty {
+            } else if rows.isEmpty {
                 SettingsNote("Your IPTV account has no channel groups yet.")
             } else {
                 GlassPanel {
-                    ForEach(shownGroups) { group in
-                        SettingsToggleRow(group.name, icon: "folder", subtitle: subtitle(for: group),
-                                          isOn: binding(for: group.id))
+                    ForEach(rows, id: \.ids) { row in
+                        SettingsToggleRow(row.name, icon: "folder", subtitle: subtitle(for: row.ids, name: row.name),
+                                          isOn: binding(for: row.ids))
                     }
                 }
             }
@@ -36,27 +37,36 @@ struct QualitySortSettingsView: View {
         .task { await load() }
     }
 
-    private func binding(for id: String) -> Binding<Bool> {
+    /// One switch for a group and its twins.
+    private func binding(for ids: [String]) -> Binding<Bool> {
         Binding(
-            get: { settings.prefs.qualitySortCategoryIDs.contains(id) },
+            get: { ids.contains { settings.prefs.qualitySortCategoryIDs.contains($0) } },
             set: { on in
                 if on {
-                    settings.prefs.qualitySortCategoryIDs.insert(id)
+                    settings.prefs.qualitySortCategoryIDs.formUnion(ids)
                 } else {
-                    settings.prefs.qualitySortCategoryIDs.remove(id)
+                    settings.prefs.qualitySortCategoryIDs.subtract(ids)
                 }
             })
     }
 
-    /// "48 channels · 4K, FHD, HD and SD folders" when on, "64 channels" when off.
-    private func subtitle(for group: XtreamCategory) -> String {
-        guard let info = summary[group.id] else { return "No channels" }
-        let channels = info.count == 1 ? "1 channel" : "\(info.count) channels"
-        guard settings.prefs.qualitySortCategoryIDs.contains(group.id), !info.qualities.isEmpty else { return channels }
-        let labels = info.qualities.map(\.label)
-        let list = labels.count == 1 ? labels[0]
-            : labels.dropLast().joined(separator: ", ") + " and " + labels[labels.count - 1]
-        return "\(channels) · \(list) folder\(labels.count == 1 ? "" : "s")"
+    /// "With UK | Entertainment HEVC · 186 channels · FHD, HD and SD folders" when on,
+    /// "64 channels" when off.
+    private func subtitle(for ids: [String], name: String) -> String {
+        let names = Dictionary(categories.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let count = ids.reduce(0) { $0 + (summary[$1]?.count ?? 0) }
+        var parts: [String] = []
+        let twins = ids.compactMap { names[$0] }.filter { $0.caseInsensitiveCompare(name) != .orderedSame }
+        if ids.count > 1, !twins.isEmpty { parts.append("With " + twins.joined(separator: ", ")) }
+        parts.append(count == 0 ? "No channels" : (count == 1 ? "1 channel" : "\(count) channels"))
+        let present = Set(ids.flatMap { summary[$0]?.qualities ?? [] })
+        let labels = ChannelQuality.allCases.filter { present.contains($0) }.map(\.label)
+        if ids.contains(where: { settings.prefs.qualitySortCategoryIDs.contains($0) }), !labels.isEmpty {
+            let list = labels.count == 1 ? labels[0]
+                : labels.dropLast().joined(separator: ", ") + " and " + labels[labels.count - 1]
+            parts.append("\(list) folder\(labels.count == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func load() async {

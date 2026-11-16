@@ -104,6 +104,7 @@ final class AppSettings: ObservableObject {
         didSet {
             prefs.save()
             QualitySort.activeCategoryIDs = prefs.qualitySortCategoryIDs
+            QualitySort.activeCustomNames = prefs.channelNames
             if prefs.epgRefreshHours != oldValue.epgRefreshHours {
                 let hours = prefs.epgRefreshHours
                 Task {
@@ -139,6 +140,7 @@ final class AppSettings: ObservableObject {
         let freshInstall = !Preferences.hasSaved
         prefs = Preferences.load()
         QualitySort.activeCategoryIDs = prefs.qualitySortCategoryIDs
+        QualitySort.activeCustomNames = prefs.channelNames
         // Anyone who already set Tellio up (before the setup screens existed) skips them.
         // A fresh install always gets setup, even with logins left in the Keychain by an
         // earlier install; its steps start filled in with them.

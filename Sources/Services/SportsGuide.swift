@@ -910,7 +910,7 @@ enum ChannelFinder {
 
     private static func match(_ channel: XtreamChannel, start: Date, matcher: FixtureMatcher,
                               client: XtreamClient) async -> ChannelMatch? {
-        let guide = await XtreamCache.shared.fullEPG(client, streamID: channel.id)
+        let guide = await XtreamCache.shared.guide(client, streamID: channel.id)
         var best: ChannelMatch?
         for entry in guide {
             guard let begins = entry.start, let ends = entry.end, isOnAir(begins, ends, at: start) else { continue }

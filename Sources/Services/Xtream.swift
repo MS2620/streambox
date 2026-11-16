@@ -30,8 +30,12 @@ struct XtreamChannel: Decodable, Identifiable, Hashable {
     /// The provider's own name, before tidying.
     var originalName: String? = nil
     var quality: ChannelQuality? = nil
+    /// The group leading its merged quality folders (itself, or its twin without HEVC).
+    var folderGroupID: String? = nil
     /// The quality folder it's in, "UK | Sports FHD", shown where groups are mixed.
     var folderName: String? = nil
+    /// Country tag and tidied name: versions of the same channel share guide listings.
+    var guideKey: String? = nil
 
     /// The provider's name, even when the shown one is tidied (for matching and ranking).
     var providerName: String { originalName ?? name }
@@ -366,7 +370,9 @@ actor XtreamCache {
 
     private var streams: (key: String, date: Date, value: [XtreamChannel])?
     private var categories: (key: String, date: Date, value: [XtreamCategory])?
-    private var tidied: (key: String, chosen: Set<String>, count: Int, date: Date, value: [XtreamChannel])?
+    private var tidied: (key: String, chosen: Set<String>, names: [Int: String], count: Int, date: Date,
+                         value: [XtreamChannel])?
+    private var guideTwins: [Int: [Int]] = [:]
     private var guides: [String: (date: Date, value: [XtreamEPGEntry])] = [:]
     private var failures: [String: Date] = [:]
     private var movieCache: (key: String, value: [XtreamVOD])?
@@ -401,16 +407,33 @@ actor XtreamCache {
     func liveStreams(_ client: XtreamClient) async throws -> [XtreamChannel] {
         let raw = try await rawLiveStreams(client)
         let chosen = QualitySort.activeCategoryIDs
-        guard !chosen.isEmpty else { return raw }
+        let names = QualitySort.activeCustomNames
+        guard !chosen.isEmpty || !names.isEmpty else {
+            guideTwins = [:]
+            return raw
+        }
         let key = accountKey(client)
-        if let tidied, tidied.key == key, tidied.chosen == chosen, tidied.count == raw.count,
+        if let tidied, tidied.key == key, tidied.chosen == chosen, tidied.names == names, tidied.count == raw.count,
            tidied.date >= (streams?.date ?? .distantPast) {
             return tidied.value
         }
         let categories = (try? await liveCategories(client)) ?? []
-        let value = QualitySort.apply(raw, chosen: chosen, categories: categories)
-        tidied = (key, chosen, raw.count, Date(), value)
+        let value = QualitySort.apply(raw, chosen: chosen, customNames: names, categories: categories)
+        tidied = (key, chosen, names, raw.count, Date(), value)
+        guideTwins = QualitySort.guideTwins(value)
         return value
+    }
+
+    /// A channel's listings; when it has none, those of another version of the same channel
+    /// (Sort by quality), since providers often leave the guide off their HEVC copies.
+    func guide(_ client: XtreamClient, streamID: Int) async -> [XtreamEPGEntry] {
+        let own = await fullEPG(client, streamID: streamID)
+        guard own.isEmpty, let twins = guideTwins[streamID] else { return own }
+        for twin in twins {
+            let entries = await fullEPG(client, streamID: twin)
+            if !entries.isEmpty { return entries }
+        }
+        return own
     }
 
     /// The channels exactly as the provider names them.
