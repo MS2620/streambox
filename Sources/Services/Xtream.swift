@@ -424,16 +424,23 @@ actor XtreamCache {
         return value
     }
 
-    /// A channel's listings; when it has none, those of another version of the same channel
-    /// (Sort by quality), since providers often leave the guide off their HEVC copies.
+    /// A channel's listings; when it has nothing from an hour ago onwards, those of another
+    /// version of the same channel (Sort by quality), since providers often leave the guide off
+    /// their HEVC copies or only send old listings for them.
     func guide(_ client: XtreamClient, streamID: Int) async -> [XtreamEPGEntry] {
         let own = await fullEPG(client, streamID: streamID)
-        guard own.isEmpty, let twins = guideTwins[streamID] else { return own }
+        guard !Self.isCurrent(own), let twins = guideTwins[streamID] else { return own }
         for twin in twins {
             let entries = await fullEPG(client, streamID: twin)
-            if !entries.isEmpty { return entries }
+            if Self.isCurrent(entries) { return entries }
         }
         return own
+    }
+
+    /// Whether listings reach from an hour ago onwards (what the guide shows).
+    private static func isCurrent(_ entries: [XtreamEPGEntry]) -> Bool {
+        let from = Date().addingTimeInterval(-3600)
+        return entries.contains { ($0.end ?? .distantPast) > from }
     }
 
     /// The channels exactly as the provider names them.
